@@ -3,6 +3,7 @@ dist/
 release/
 desktop/NovelReadingDemo/bin/
 desktop/NovelReadingDemo/obj/
+*.csproj.user
 *.local
 .env
 .env.*
