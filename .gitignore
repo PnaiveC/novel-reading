@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+desktop/NovelReadingDemo/bin/
+desktop/NovelReadingDemo/obj/
 *.local
 .env
 .env.*

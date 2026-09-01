@@ -19,17 +19,16 @@ npm run build   # 类型检查 + 生产构建
 npm run pack:win
 ```
 
-产物为单文件 `release/novel-reading-demo.exe`（portable 版，免安装）。
+产物为单文件 `release/novel-reading-demo.exe`（约 2MB，基于系统 WebView2
+内核，不内置 Chromium；页面、依赖已全部嵌入 exe）。
 
 注意事项：
 
 - 打包前请先停止 `npm run dev` 开发服务器：Windows 下 Vite 的文件监听会
-  锁住 `release` 目录，导致打包的解压重命名步骤失败（EPERM）。
-- 国内网络环境下，Electron 二进制可能下载失败，可在打包前设置镜像：
-  ```powershell
-  $env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
-  $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'
-  ```
+  锁住 `release` 目录，导致发布步骤失败（EPERM）。
+- 构建需要 .NET 10 SDK；当前产物为 framework-dependent 单文件版，运行机器
+  需安装 .NET Desktop Runtime 10（本机已装，可直接运行）。
+- 运行需要系统 WebView2 运行时（Windows 10/11 通常已预装）。
 
 ## 环境注意（Windows 应用控制策略）
 
