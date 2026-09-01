@@ -13,6 +13,24 @@ npm run build   # 类型检查 + 生产构建
 
 详细规划见 [docs/mvp-plan.md](docs/mvp-plan.md)。
 
+## 打包为 Windows exe
+
+```bash
+npm run pack:win
+```
+
+产物为单文件 `release/novel-reading-demo.exe`（portable 版，免安装）。
+
+注意事项：
+
+- 打包前请先停止 `npm run dev` 开发服务器：Windows 下 Vite 的文件监听会
+  锁住 `release` 目录，导致打包的解压重命名步骤失败（EPERM）。
+- 国内网络环境下，Electron 二进制可能下载失败，可在打包前设置镜像：
+  ```powershell
+  $env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
+  $env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'
+  ```
+
 ## 环境注意（Windows 应用控制策略）
 
 当前开发机的 Windows 应用控制策略会拦截 Node 加载 rollup 的原生绑定 DLL，

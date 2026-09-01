@@ -2,10 +2,14 @@
   "name": "novel-reading",
   "private": true,
   "version": "0.1.0",
+  "description": "小说阅读器 MVP（本地 TXT 阅读）",
+  "author": "ai-power",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "pack:win": "npm run build && electron-builder --win portable",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -16,11 +20,37 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.6",
+    "electron": "^44.1.0",
+    "electron-builder": "^26.15.3",
     "jsdom": "^26.0.0",
     "typescript": "~5.7.3",
     "vite": "^6.0.7",
     "vitest": "^3.0.2",
     "vue-tsc": "^2.2.0"
+  },
+  "build": {
+    "appId": "com.ai-power.novel-reading-demo",
+    "productName": "novel-reading-demo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "novel-reading-demo.exe"
+    }
   },
   "overrides": {
     "rollup": "npm:@rollup/wasm-node@4.63.1"
