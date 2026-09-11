@@ -11,7 +11,10 @@ npm test        # 运行测试
 npm run build   # 类型检查 + 生产构建
 ```
 
-详细规划见 [docs/mvp-plan.md](docs/mvp-plan.md)。
+文档：
+
+- [docs/mvp-plan.md](docs/mvp-plan.md)：需求与规划
+- [docs/EXPERIENCE.md](docs/EXPERIENCE.md)：开发经验、环境坑、可优化方向与交接清单
 
 ## 打包为 Windows exe
 
