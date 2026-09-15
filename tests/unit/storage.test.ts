@@ -15,9 +15,18 @@ beforeEach(() => {
 describe('storage', () => {
   it('进度保存与读取', () => {
     const key = fileKey('novel.txt', 12345)
-    saveProgress(key, { chapterIndex: 3, updatedAt: 111 })
-    expect(loadProgress(key)).toEqual({ chapterIndex: 3, updatedAt: 111 })
+    saveProgress(key, { chapterIndex: 3, paragraphIndex: 8, updatedAt: 111 })
+    expect(loadProgress(key)).toEqual({ chapterIndex: 3, paragraphIndex: 8, updatedAt: 111 })
     expect(loadProgress('missing')).toBeNull()
+  })
+
+  it('v1 老记录（没有段落锚点）读出来补 0', () => {
+    const key = fileKey('v1.txt', 1)
+    window.localStorage.setItem(
+      `novel-reading:progress:${key}`,
+      JSON.stringify({ chapterIndex: 5, updatedAt: 1 }),
+    )
+    expect(loadProgress(key)).toEqual({ chapterIndex: 5, paragraphIndex: 0, updatedAt: 1 })
   })
 
   it('设置保存与读取', () => {

@@ -1,3 +1,5 @@
+import { usableLocalStorage } from './webStorage'
+
 export interface ReadingSettings {
   fontSize: number
   lineHeight: number
@@ -7,6 +9,8 @@ export interface ReadingSettings {
 
 export interface ReadingProgress {
   chapterIndex: number
+  /** 章节内段落锚点（A4）：重开后位置误差不超过一屏 */
+  paragraphIndex: number
   updatedAt: number
 }
 
@@ -15,14 +19,7 @@ const PREFIX = 'novel-reading:'
 const fallback = new Map<string, string>()
 
 function getStore(): Storage | null {
-  try {
-    if (typeof window !== 'undefined' && typeof window.localStorage?.getItem === 'function') {
-      return window.localStorage
-    }
-  } catch {
-    // 忽略访问异常，走内存兜底
-  }
-  return null
+  return usableLocalStorage()
 }
 
 function readItem(key: string): string | null {
@@ -56,10 +53,42 @@ export function loadProgress(key: string): ReadingProgress | null {
   if (!raw) return null
   try {
     const data = JSON.parse(raw) as ReadingProgress
-    return typeof data.chapterIndex === 'number' ? data : null
+    if (typeof data.chapterIndex !== 'number') return null
+    return {
+      chapterIndex: data.chapterIndex,
+      // v1 只记到章节，回填成第 0 段
+      paragraphIndex: typeof data.paragraphIndex === 'number' ? data.paragraphIndex : 0,
+      updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : 0,
+    }
   } catch {
     return null
   }
+}
+
+export function removeProgress(key: string): void {
+  const store = getStore()
+  if (store) store.removeItem(`${PREFIX}progress:${key}`)
+  else fallback.delete(`${PREFIX}progress:${key}`)
+}
+
+/**
+ * v1 用「文件名 + 大小」当进度键，v2 换成内容哈希。
+ * 打开书时调一次：新键没有进度、旧键有，就把旧进度搬过来并删掉旧键。
+ */
+export function migrateLegacyProgress(
+  bookId: string,
+  name: string,
+  size: number,
+): ReadingProgress | null {
+  const current = loadProgress(bookId)
+  if (current) return current
+  const legacyKey = fileKey(name, size)
+  if (legacyKey === bookId) return null
+  const legacy = loadProgress(legacyKey)
+  if (!legacy) return null
+  saveProgress(bookId, legacy)
+  removeProgress(legacyKey)
+  return legacy
 }
 
 export function saveSettings(settings: ReadingSettings): void {

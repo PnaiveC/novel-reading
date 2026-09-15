@@ -27,9 +27,12 @@
 | Vite dev server 锁目录 | 打包时 electron-builder/dotnet publish 对 `release` 目录重命名失败（EPERM） | 打包前必须先停止 `npm run dev`（Vite 文件监听会握住目录句柄） |
 | .NET 单文件发布 CLI 开关失效 | `--self-contained false` 被忽略，产物莫名 116MB | 必须用属性写法 `-p:SelfContained=false`；嵌入全部内容加 `-p:IncludeAllContentForSelfExtract=true` |
 | WebView2 加载本地页面空白 | `file://` 打开 Vite 产物时 ES module 被 Chromium 拦截，窗口白屏 | 用 `SetVirtualHostNameToFolderMapping` 把 dist 映射到 `https://appassets.local` 再导航 |
-| Node 25 全局 localStorage 占位 | jsdom 测试中 `localStorage.getItem is not a function` | 存储模块优先用 `window.localStorage`，并做内存 Map 兜底（见 `src/core/storage.ts`） |
+| Node 25 全局 localStorage 占位 | jsdom 测试中 `localStorage.getItem is not a function`，且它会盖住 jsdom 的实现 | 统一在 `tests/setup.ts` 换成内存 Storage；`src/core/webStorage.ts` 只认功能齐备（get/set/remove 都是函数）的 Storage，否则走内存兜底 |
 | PowerShell 终端中文乱码 | `Get-Content` 输出中文变乱码 | 多为终端编码显示问题，文件本身 UTF-8 正常；用 `node -e` 校验内容而非直接看终端 |
 | 传递依赖消失 | 删除 electron/electron-builder 后 `@types/node` 被连带移除，`vue-tsc` 类型检查崩溃 | 关键类型包应显式声明在 devDependencies，不依赖传递依赖 |
+| 单文件产物白屏（脚本跑太早） | 内联后 `<script>` 变普通脚本，仍在 `<head>`，执行时 `<div id="app">` 还没解析出来 | 内联时把脚本统一挪到 `</body>` 前（`type="module"` 的 defer 语义没了，得自己补位） |
+| 内联脚本被 `$&` / `` $` `` / `$'` 吃坏 | 用字符串做 `String.replace` 的替换值时，脚本里的这些字符会被当成占位符展开，产物里混进半截 HTML，报 `SyntaxError: Unexpected token '<'` | 替换值一律用函数 `() => text`；`tests/unit/singleFile.test.ts` 有对应用例 |
+| `file://` 下浏览器拒用 IndexedDB | A3「记住上次这本书」直接失效 | `src/core/library.ts` 自动退回 localStorage；配额满时只提示「下次需重选文件」，不阻断本次阅读 |
 
 ## 3. MVP 开发经验总结
 
@@ -86,4 +89,15 @@
 
 基线验证：`npm test` 14 项通过、`npm run build` 成功（两者都需在沙箱外执行）。
 
-下一步：从 `v2-features.md` 的 A1（单文件产物）开始。
+## 7. A 块（地基）交付记录 — 2026-09-15
+
+一次做完 A1–A4，没有按 A1→A2→A3→A4 切四刀：这四件事共用同一条链路（打开文件 → 存本机 → 记进度 → 恢复），拆开提交反而要反复改同一批文件。
+
+- A1 单文件产物：`build/single-file.ts` 把入口 chunk 与 CSS 内联，删掉 `script src` / `link href` / `modulepreload`，产物只剩 `dist/index.html`；若仍存在外部引用直接让构建失败。
+- A2 打开 TXT：窗口任意位置拖拽 + 「选择文件」两种入口；编码自动识别后立即上屏。
+- A3 记住上次这本书：正文连同名字、编码、时间一起存本机；启动时自动回到这本书。
+- A4 进度记忆：`章节下标 + 段落下标`（`src/core/anchor.ts` 从视口坐标挑锚点），滚动时节流写入，恢复时把锚点段落顶到视口顶部，误差小于一屏。
+
+顺手做掉的两件前置事：进度键从「文件名 + 大小」换成内容哈希（v1 老进度自动搬家），阅读页给了最小的上一章 / 下一章（否则没法走到书中段去验收 A4；键盘快捷键仍按 B5 再做）。
+
+下一步：B 块（读取核心），从 B1（编码识别与手动切换）开始。

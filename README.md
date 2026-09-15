@@ -25,11 +25,18 @@ npm run build   # 类型检查 + 生产构建
 ## 当前目录
 
 ```
-src/core/       编码检测、章节解析、进度存储（纯逻辑，单测覆盖）
-src/App.vue     v2 骨架占位，界面在 A2 / B4 / C1 中逐个实现
-tests/unit/     核心逻辑单测
-samples/        手测用样例小说
+src/core/        编码检测、章节解析、书库（IndexedDB + localStorage 兜底）、进度存储（纯逻辑）
+src/composables/ useReader：打开书 → 正文上屏 → 记住这本书与读到哪儿
+src/App.vue      界面：空态（拖拽 / 选文件）、阅读页（正文 + 上下章 + 位置提示）
+build/           vite 单文件插件（JS/CSS 内联，产物只剩 1 个 HTML）
+tests/unit/      单测；distBoot 会空跑构建产物，确认双击能起来
+samples/         手测用样例小说
 ```
+
+## 交付
+
+`npm run build` → `dist/index.html`（约 79 KB，已内联全部 JS/CSS）。双击它就能读，
+不联网、无安装步骤；产物若还引用外部文件，构建会直接失败。
 
 ## 环境注意事项（本机实测，别踩回头路）
 
