@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { createLibrary, StorageFullError, type StoredBook } from '../../src/core/library'
+import {
+  createLibrary,
+  parseStoredBook,
+  serializeBook,
+  StorageFullError,
+  type StoredBook,
+} from '../../src/core/library'
 
 function makeBook(id: string): StoredBook {
   return {
@@ -62,6 +68,15 @@ describe('createLibrary（IndexedDB 后端）', () => {
     await library.saveBook({ ...makeBook('a'), lastOpenedAt: 9 })
     expect((await library.getBook('a'))?.lastOpenedAt).toBe(9)
   })
+
+  it('原始字节（B1 手动切编码要用）一起存下来', async () => {
+    const library = createLibrary({ indexedDb: new IDBFactory() })
+    const bytes = new Uint8Array([0xb5, 0xda, 0xd2, 0xbb, 0x0a])
+    await library.saveBook({ ...makeBook('a'), bytes, encoding: 'gbk', encodingLocked: true })
+    const stored = await library.getBook('a')
+    expect(Array.from(stored?.bytes ?? [])).toEqual(Array.from(bytes))
+    expect(stored?.encodingLocked).toBe(true)
+  })
 })
 
 describe('createLibrary（localStorage 兜底）', () => {
@@ -102,5 +117,41 @@ describe('createLibrary（localStorage 兜底）', () => {
     }
     const library = createLibrary({ indexedDb: null, storage: full })
     await expect(library.saveBook(makeBook('d'))).rejects.toBeInstanceOf(StorageFullError)
+  })
+
+  it('字节存不下时退一步只存正文，至少还认得出这本书', async () => {
+    const limit = 400
+    const tight: Storage = {
+      length: 0,
+      clear: () => undefined,
+      key: () => null,
+      getItem: (key) => window.localStorage.getItem(key),
+      removeItem: (key) => window.localStorage.removeItem(key),
+      setItem: (key, value) => {
+        if (value.length > limit) throw new Error('QuotaExceededError')
+        window.localStorage.setItem(key, value)
+      },
+    }
+    const library = createLibrary({ indexedDb: null, storage: tight })
+    const book = makeBook('big')
+    await library.saveBook({ ...book, bytes: new Uint8Array(900).fill(7) })
+
+    const stored = await library.getBook('big')
+    expect(stored?.text).toBe(book.text)
+    expect(stored?.bytes).toBeUndefined()
+  })
+})
+
+describe('serializeBook / parseStoredBook', () => {
+  it('字节转 base64 再转回来一模一样', () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x41, 0x00, 0xff])
+    const raw = serializeBook({ ...makeBook('x'), bytes })
+    expect(raw).toContain('bytesBase64')
+    expect(Array.from(parseStoredBook(raw)?.bytes ?? [])).toEqual(Array.from(bytes))
+  })
+
+  it('没有字节的老记录照样读得出来', () => {
+    const raw = JSON.stringify({ ...makeBook('old'), bytes: undefined })
+    expect(parseStoredBook(raw)?.text).toBe(makeBook('old').text)
   })
 })

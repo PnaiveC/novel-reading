@@ -9,6 +9,8 @@ export interface LoadedBook {
   encoding: Encoding
   text: string
   chapters: Chapter[]
+  /** 原始字节：手动切换编码（B1）要重新解码它；没有字节就切不了 */
+  bytes?: Uint8Array
 }
 
 export interface BookTextInput {
@@ -40,7 +42,7 @@ export function computeBookId(bytes: Uint8Array): string {
 }
 
 /** 已解码文本 → 书（切章）。解码与切章分离，方便从本地存储直接恢复。 */
-export function bookFromText(input: BookTextInput): LoadedBook {
+export function bookFromText(input: BookTextInput, bytes?: Uint8Array): LoadedBook {
   const text = input.text.replace(/^\uFEFF/, '')
   return {
     id: input.id,
@@ -49,17 +51,24 @@ export function bookFromText(input: BookTextInput): LoadedBook {
     encoding: input.encoding,
     text,
     chapters: parseChapters(text),
+    bytes,
   }
 }
 
-/** 原始字节 → 书：自动识别编码后解码并切章 */
-export function loadBookFromBytes(name: string, bytes: Uint8Array): LoadedBook {
-  const encoding = detectEncoding(bytes)
-  return bookFromText({
-    id: computeBookId(bytes),
-    name,
-    size: bytes.length,
-    encoding,
-    text: decodeText(bytes, encoding),
-  })
+/**
+ * 原始字节 → 书：自动识别编码后解码并切章。
+ * 传了 `encoding` 就用它（手动切换编码 / 沿用上次的手动选择）。
+ */
+export function loadBookFromBytes(name: string, bytes: Uint8Array, encoding?: Encoding): LoadedBook {
+  const chosen = encoding ?? detectEncoding(bytes)
+  return bookFromText(
+    {
+      id: computeBookId(bytes),
+      name,
+      size: bytes.length,
+      encoding: chosen,
+      text: decodeText(bytes, chosen),
+    },
+    bytes,
+  )
 }

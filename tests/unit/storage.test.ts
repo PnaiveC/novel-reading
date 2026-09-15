@@ -30,9 +30,33 @@ describe('storage', () => {
   })
 
   it('设置保存与读取', () => {
-    const settings = { fontSize: 20, lineHeight: 2, maxWidth: 40, theme: 'dark' as const }
+    const settings = {
+      fontSize: 20,
+      lineHeight: 2,
+      maxWidth: 40,
+      paragraphSpacing: 0.8,
+      indent: 0 as const,
+      fontFamily: 'kai' as const,
+      theme: 'dark' as const,
+    }
     saveSettings(settings)
     expect(loadSettings()).toEqual(settings)
+  })
+
+  it('v1 留下的旧设置（缺新字段）读出来补齐默认值', () => {
+    window.localStorage.setItem('novel-reading:settings', JSON.stringify({ fontSize: 20, theme: 'dark' }))
+    expect(loadSettings()).toMatchObject({
+      fontSize: 20,
+      theme: 'dark',
+      fontFamily: 'song',
+      indent: 2,
+      paragraphSpacing: 0.55,
+    })
+  })
+
+  it('设置里的坏 JSON 当作没设置过', () => {
+    window.localStorage.setItem('novel-reading:settings', '{不是 JSON')
+    expect(loadSettings()).toBeNull()
   })
 
   it('fileKey 稳定且能区分不同文件', () => {

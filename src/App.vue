@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import SettingsPanel from './components/SettingsPanel.vue'
+import TocPanel from './components/TocPanel.vue'
 import { pickAnchorIndex } from './core/anchor'
+import type { Encoding } from './core/encoding'
 import type { Library } from './core/library'
+import { FONT_STACKS } from './core/settings'
 import { useReader } from './composables/useReader'
+import { useSettings } from './composables/useSettings'
 
 const props = defineProps<{ library?: Library }>()
 
@@ -11,23 +16,44 @@ const {
   errorMessage,
   notice,
   book,
+  chapters,
   chapter,
   chapterIndex,
   anchorIndex,
+  revision,
   paragraphs,
   hasPrev,
   hasNext,
   chapterLabel,
+  encoding,
+  encodingLabel,
+  canSwitchEncoding,
   openFile,
   restoreLastBook,
   rememberPosition,
+  setEncoding,
+  goToChapter,
   nextChapter,
   prevChapter,
 } = useReader({ library: props.library })
 
+const { settings, update: updateSettings, reset: resetSettings } = useSettings()
+
 const scrollEl = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const dragging = ref(false)
+const tocOpen = ref(false)
+const settingsOpen = ref(false)
+
+/** 排版设置落到 CSS 变量（B4）：改一下立刻生效，不用重建正文 */
+const readerStyle = computed(() => ({
+  '--reader-font': FONT_STACKS[settings.value.fontFamily],
+  '--reader-size': `${settings.value.fontSize}px`,
+  '--reader-line': String(settings.value.lineHeight),
+  '--reader-width': `${settings.value.maxWidth}em`,
+  '--reader-para-gap': `${settings.value.paragraphSpacing}em`,
+  '--reader-indent': `${settings.value.indent}em`,
+}))
 
 /** 恢复滚动期间不要把中间态当成用户位置写进进度 */
 let restoring = false
@@ -77,12 +103,79 @@ function onVisibilityChange(): void {
   if (document.visibilityState === 'hidden') flushPosition()
 }
 
-watch([() => book.value?.id, chapterIndex], () => {
+/** 翻一页（B5）：按视口高度的九成滚，留一点上一屏的尾巴不至于跳读 */
+function turnPage(direction: 1 | -1): void {
+  const container = scrollEl.value
+  if (!container) return
+  container.scrollTop += direction * Math.max(80, Math.round(container.clientHeight * 0.9))
+}
+
+function scrollToChapterStart(): void {
+  if (scrollEl.value) scrollEl.value.scrollTop = 0
+}
+
+function scrollToChapterEnd(): void {
+  const container = scrollEl.value
+  if (container) container.scrollTop = container.scrollHeight
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (status.value !== 'reading') return
+  const target = event.target as HTMLElement | null
+  if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+  if (event.altKey || event.ctrlKey || event.metaKey) return
+
+  switch (event.key) {
+    case 'ArrowLeft':
+      event.preventDefault()
+      prevChapter()
+      break
+    case 'ArrowRight':
+      event.preventDefault()
+      nextChapter()
+      break
+    case ' ':
+    case 'PageDown':
+      event.preventDefault()
+      turnPage(1)
+      break
+    case 'PageUp':
+      event.preventDefault()
+      turnPage(-1)
+      break
+    case 'Home':
+      event.preventDefault()
+      scrollToChapterStart()
+      break
+    case 'End':
+      event.preventDefault()
+      scrollToChapterEnd()
+      break
+    case 'Escape':
+      tocOpen.value = false
+      settingsOpen.value = false
+      break
+    default:
+      break
+  }
+}
+
+function onEncodingChange(value: Encoding): void {
+  void setEncoding(value)
+}
+
+watch([() => book.value?.id, chapterIndex, revision], () => {
   void restoreScroll()
+})
+
+watch(chapters, () => {
+  const last = Math.max(0, chapters.value.length - 1)
+  if (chapterIndex.value > last) chapterIndex.value = last
 })
 
 onMounted(() => {
   window.addEventListener('beforeunload', flushPosition)
+  window.addEventListener('keydown', onKeydown)
   document.addEventListener('visibilitychange', onVisibilityChange)
   void restoreLastBook()
 })
@@ -90,6 +183,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (frame) cancelAnimationFrame(frame)
   window.removeEventListener('beforeunload', flushPosition)
+  window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
@@ -114,6 +208,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 <template>
   <div
     class="app"
+    :style="readerStyle"
     @dragover.prevent="dragging = true"
     @dragleave="dragging = false"
     @drop.prevent="onDrop"
@@ -128,32 +223,74 @@ async function onDrop(event: DragEvent): Promise<void> {
 
     <template v-if="status === 'reading'">
       <header class="bar">
-        <button class="nav" :disabled="!hasPrev" @click="prevChapter()">上一章</button>
+        <button
+          class="nav toggler"
+          :class="{ on: tocOpen }"
+          title="目录（Esc 收起）"
+          @click="tocOpen = !tocOpen"
+        >
+          目录
+        </button>
+        <button class="nav" :disabled="!hasPrev" title="上一章（←）" @click="prevChapter()">上一章</button>
+        <button class="nav" :disabled="!hasNext" title="下一章（→）" @click="nextChapter()">下一章</button>
         <div class="where">
           <span class="book-name">{{ book?.name }}</span>
           <span class="chapter-name">{{ chapter?.title }}</span>
         </div>
-        <button class="nav" :disabled="!hasNext" @click="nextChapter()">下一章</button>
+        <button
+          class="nav toggler"
+          :class="{ on: settingsOpen }"
+          title="排版与编码"
+          @click="settingsOpen = !settingsOpen"
+        >
+          排版
+        </button>
         <button class="open" @click="openPicker">换一本</button>
       </header>
 
-      <main ref="scrollEl" class="reader" @scroll.passive="onScroll">
-        <article class="page">
-          <h1 class="chapter-title">{{ chapter?.title }}</h1>
-          <p v-for="(text, index) in paragraphs" :key="index" :data-p="index" class="para">
-            {{ text }}
-          </p>
-          <p class="tail">
-            <button v-if="hasNext" class="nav" @click="nextChapter()">下一章 →</button>
-            <span v-else class="end">— 全书完 —</span>
-          </p>
-        </article>
-      </main>
+      <div class="body">
+        <TocPanel
+          v-if="tocOpen"
+          :chapters="chapters"
+          :current="chapterIndex"
+          :book-name="book?.name"
+          @pick="goToChapter"
+          @close="tocOpen = false"
+        />
 
-      <footer class="status">
-        <span>{{ chapterLabel }}</span>
-        <span v-if="notice" class="notice">⚠ {{ notice }}</span>
-      </footer>
+        <div class="column">
+          <SettingsPanel
+            v-if="settingsOpen"
+            :settings="settings"
+            :encoding="encoding"
+            :encoding-label="encodingLabel"
+            :can-switch-encoding="canSwitchEncoding"
+            @update="updateSettings"
+            @encoding="onEncodingChange"
+            @reset="resetSettings"
+            @close="settingsOpen = false"
+          />
+
+          <main ref="scrollEl" class="reader" @scroll.passive="onScroll">
+            <article class="page">
+              <h1 class="chapter-title">{{ chapter?.title }}</h1>
+              <p v-for="(textItem, index) in paragraphs" :key="index" :data-p="index" class="para">
+                {{ textItem }}
+              </p>
+              <p class="tail">
+                <button v-if="hasNext" class="nav" @click="nextChapter()">下一章 →</button>
+                <span v-else class="end">— 全书完 —</span>
+              </p>
+            </article>
+          </main>
+
+          <footer class="status">
+            <span class="pos">{{ chapterLabel }}</span>
+            <span class="keys">← → 翻章 · 空格 / PageDown 翻页 · Home / End 章首末</span>
+            <span v-if="notice" class="notice">⚠ {{ notice }}</span>
+          </footer>
+        </div>
+      </div>
     </template>
 
     <section v-else-if="status === 'loading'" class="center">
@@ -208,7 +345,7 @@ body {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 8px 16px;
   border-bottom: 1px solid #e3ddd0;
   background: #fbf9f4;
@@ -267,6 +404,24 @@ button {
   border-color: #c8bfae;
 }
 
+.nav.toggler.on {
+  background: #e2dccc;
+  border-color: #c8bfae;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .reader {
   flex: 1;
   overflow-y: auto;
@@ -274,11 +429,12 @@ button {
 }
 
 .page {
-  max-width: 36em;
+  max-width: var(--reader-width, 36em);
   margin: 0 auto;
   padding: 40px 24px 72px;
-  font-size: 18px;
-  line-height: 1.9;
+  font-family: var(--reader-font, inherit);
+  font-size: var(--reader-size, 18px);
+  line-height: var(--reader-line, 1.9);
 }
 
 .chapter-title {
@@ -289,8 +445,8 @@ button {
 }
 
 .para {
-  margin: 0 0 0.55em;
-  text-indent: 2em;
+  margin: 0 0 var(--reader-para-gap, 0.55em);
+  text-indent: var(--reader-indent, 2em);
   text-align: justify;
   overflow-wrap: break-word;
 }
@@ -311,11 +467,16 @@ button {
   flex-wrap: wrap;
   gap: 4px 12px;
   justify-content: center;
+  align-items: center;
   padding: 6px 16px;
   border-top: 1px solid #e3ddd0;
   background: #fbf9f4;
   color: #9a9384;
   font-size: 12px;
+}
+
+.keys {
+  color: #b8b1a3;
 }
 
 .notice {
@@ -377,5 +538,11 @@ button {
   padding: 24px 40px;
   border: 2px dashed rgba(255, 255, 255, 0.8);
   border-radius: 12px;
+}
+
+@media (max-width: 720px) {
+  .keys {
+    display: none;
+  }
 }
 </style>

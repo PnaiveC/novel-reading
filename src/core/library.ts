@@ -1,3 +1,4 @@
+import { base64ToBytes, bytesToBase64 } from './base64'
 import type { Encoding } from './encoding'
 import { usableLocalStorage } from './webStorage'
 
@@ -8,6 +9,10 @@ export interface StoredBook {
   size: number
   encoding: Encoding
   text: string
+  /** 原始字节（B1：手动切编码要用）。localStorage 兜底时可能存不下，见下 */
+  bytes?: Uint8Array
+  /** 用户手动选过编码：下次打开别再自动识别，免得把他的选择顶掉 */
+  encodingLocked?: boolean
   addedAt: number
   lastOpenedAt: number
 }
@@ -17,6 +22,29 @@ export interface Library {
   getBook(id: string): Promise<StoredBook | null>
   getLastBook(): Promise<StoredBook | null>
   setLastBook(id: string): Promise<void>
+}
+
+/** localStorage 只能存字符串：落盘时把字节转 base64，读回时转回来 */
+interface StoredBookJson extends Omit<StoredBook, 'bytes'> {
+  bytesBase64?: string
+}
+
+export function serializeBook(book: StoredBook): string {
+  const { bytes, ...rest } = book
+  const payload: StoredBookJson = rest
+  if (bytes?.length) payload.bytesBase64 = bytesToBase64(bytes)
+  return JSON.stringify(payload)
+}
+
+export function parseStoredBook(raw: string): StoredBook | null {
+  try {
+    const data = JSON.parse(raw) as StoredBookJson
+    if (typeof data?.text !== 'string') return null
+    const { bytesBase64, ...rest } = data
+    return bytesBase64 ? { ...rest, bytes: base64ToBytes(bytesBase64) } : rest
+  } catch {
+    return null
+  }
 }
 
 export interface LibraryOptions {
@@ -152,16 +180,22 @@ function localLibrary(provided?: Storage | null): Library {
   const readBook = (id: string): StoredBook | null => {
     const raw = read(bookStorageKey(id))
     if (!raw) return null
-    try {
-      const book = JSON.parse(raw) as StoredBook
-      return typeof book.text === 'string' ? book : null
-    } catch {
-      return null
-    }
+    return parseStoredBook(raw)
   }
 
   return {
-    saveBook: async (book) => write(bookStorageKey(book.id), JSON.stringify(book)),
+    saveBook: async (book) => {
+      const key = bookStorageKey(book.id)
+      const full = serializeBook(book)
+      try {
+        write(key, full)
+        return
+      } catch (error) {
+        // 存不下原始字节时退一步：只存解码后的正文，至少保住「记住上次这本书」
+        if (!book.bytes?.length) throw error
+      }
+      write(key, serializeBook({ ...book, bytes: undefined }))
+    },
     getBook: async (id) => readBook(id),
     getLastBook: async () => {
       const id = read(lastBookStorageKey())

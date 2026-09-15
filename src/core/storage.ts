@@ -1,11 +1,7 @@
 import { usableLocalStorage } from './webStorage'
+import { normalizeSettings, type ReadingSettings } from './settings'
 
-export interface ReadingSettings {
-  fontSize: number
-  lineHeight: number
-  maxWidth: number
-  theme: 'light' | 'sepia' | 'dark'
-}
+export type { ReadingSettings } from './settings'
 
 export interface ReadingProgress {
   chapterIndex: number
@@ -92,14 +88,14 @@ export function migrateLegacyProgress(
 }
 
 export function saveSettings(settings: ReadingSettings): void {
-  writeItem(`${PREFIX}settings`, JSON.stringify(settings))
+  writeItem(`${PREFIX}settings`, JSON.stringify(normalizeSettings(settings)))
 }
 
 export function loadSettings(): ReadingSettings | null {
   const raw = readItem(`${PREFIX}settings`)
   if (!raw) return null
   try {
-    return JSON.parse(raw) as ReadingSettings
+    return normalizeSettings(JSON.parse(raw) as Partial<ReadingSettings>)
   } catch {
     return null
   }

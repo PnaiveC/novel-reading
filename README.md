@@ -25,18 +25,27 @@ npm run build   # 类型检查 + 生产构建
 ## 当前目录
 
 ```
-src/core/        编码检测、章节解析、书库（IndexedDB + localStorage 兜底）、进度存储（纯逻辑）
-src/composables/ useReader：打开书 → 正文上屏 → 记住这本书与读到哪儿
-src/App.vue      界面：空态（拖拽 / 选文件）、阅读页（正文 + 上下章 + 位置提示）
+src/core/        编码检测（UTF-8 / GBK / GB18030 / UTF-16LE）、章节解析、书库（IndexedDB + localStorage 兜底）、
+                 进度与设置存储、位置百分比、base64（兜底存原始字节）——全是纯逻辑
+src/composables/ useReader：打开书 → 正文上屏 → 记住书 / 位置 / 编码；useSettings：排版设置
+src/components/  TocPanel（目录）、SettingsPanel（排版与编码）
+src/App.vue      界面：空态（拖拽 / 选文件）、阅读页（正文 + 目录 + 上下章 + 键盘 + 位置提示）
 build/           vite 单文件插件（JS/CSS 内联，产物只剩 1 个 HTML）
 tests/unit/      单测；distBoot 会空跑构建产物，确认双击能起来
-samples/         手测用样例小说
+samples/         手测用样例小说（demo.txt 与它的 GBK 版 demo-gbk.txt）
 ```
 
 ## 交付
 
-`npm run build` → `dist/index.html`（约 79 KB，已内联全部 JS/CSS）。双击它就能读，
+`npm run build` → `dist/index.html`（约 93 KB，已内联全部 JS/CSS）。双击它就能读，
 不联网、无安装步骤；产物若还引用外部文件，构建会直接失败。
+
+## 用法
+
+- 打开：把 TXT 拖进窗口，或点「选择文件」；关掉再打开自动回到上次那本书与上次读到的段落
+- 目录：左上角「目录」，点击跳章，Esc 收起
+- 键盘：`←` / `→` 翻章，`空格` / `PageDown` 翻页，`PageUp` 回翻，`Home` / `End` 到本章首 / 末
+- 排版：右上角「排版」调字号、行距、页宽、段间距、缩进、字体；编码也能在这里手动切（切换后阅读位置不变）
 
 ## 环境注意事项（本机实测，别踩回头路）
 
