@@ -1,21 +1,20 @@
 # EXPERIENCE.md（novel-reading）
 
 > 本文档供后续参与 **novel-reading** 项目的 agent 参考，沉淀已踩过的坑与可优化方向。
-> 最近更新：2026-09-01（MVP：TXT 小说阅读器）
+> 最近更新：2026-09-15（v1 冻结、v2 环境准备完成）
 > 归属调整：2026-09-11 由容器目录 `ai-power` 的根目录移入本项目 `docs/`；同日 `novel-reading/` 已拆分为独立 git 仓库，本文件随项目一起迁移。
 
-## 1. 项目现状速览
+## 1. 项目现状速览（2026-09-15 更新）
 
 - 项目目录：`novel-reading`（独立 git 仓库，放在容器目录 `ai-power` 下）
-- MVP 目标：本地 TXT 阅读闭环（打开文件 → 阅读 → 记住进度）
-- 技术栈：
-  - Web 应用：Vite 6 + Vue 3.5 + TypeScript + Vitest（纯前端，无后端）
-  - 桌面壳：C# WinForms + WebView2（.NET 10，framework-dependent 单文件，约 2MB）
-- 测试：15 个单元测试（编码检测 / 章节解析 / 进度存储 / 冒烟 / 打包产物）
-- 打包命令：`npm run pack:win`，产物 `novel-reading/release/novel-reading-demo.exe`
-- 规划文档：[novel-reading/docs/mvp-plan.md](novel-reading/docs/mvp-plan.md)
+- 当前版本：**v2（重做版）**；v1 冻结在 tag `v1-mvp`
+- 形态：构建成**单个 HTML 文件**，双击用浏览器打开（无 .NET / WebView2 / 安装步骤）
+- 技术栈：Vite 6 + Vue 3.5 + TypeScript + Vitest（纯前端，无后端）
+- 保留代码：`src/core/`（编码检测 / 章节解析 / 进度存储，纯逻辑、单测覆盖）
+- 已删除：C# + WebView2 交付壳、v1 界面组件、`release/`、旧 `dist/`、只服务旧壳的打包测试
+- 文档：[`v2-features.md`](v2-features.md) 功能清单（逐个实现与验收）、[`v2-plan.md`](v2-plan.md) 方案与验收标准、[`mvp-plan.md`](mvp-plan.md) v1 需求存档
 
-接手前请先读 `AGENTS.md` 与本文件，再读 `docs/mvp-plan.md`。
+接手前请先读 `AGENTS.md`、本文件与 `docs/v2-features.md`。
 
 ## 2. 环境与工具链注意事项（重要，均为实际踩过的坑）
 
@@ -67,8 +66,24 @@
 
 ## 5. 交接时的开局清单
 
-1. 在项目目录 `novel-reading/` 下执行 `git log --oneline -10`，看最近提交、理解当前进度
-2. 运行 `npm test` 确认基线全绿（需沙箱外）
-3. `npm run dev` 体验页面（注意：打包前必须先停掉它）
-4. 改动涉及 `desktop/NovelReadingDemo/` 时，修改后跑 `npm run pack:win` 验证 exe
+1. 在 `novel-reading/` 下执行 `git log --oneline -5` 看最近提交；需要 v1 的壳或界面时用 `git show v1-mvp:<路径>`
+2. 运行 `npm test` 确认基线全绿（沙箱内会 `spawn EPERM`，需在沙箱外执行）
+3. `npm run dev` 起开发服务器手工体验
+4. 按 `docs/v2-features.md` 的顺序做当前功能项：实现 → 自测 → 用户在浏览器验收 → 提交 → 下一项
 5. 遵守协作纪律：小步提交、每次改动带测试、敏感信息不入库、不破坏工作区中未提交的用户改动；容器级约定见 `../../AGENTS.md`
+
+## 6. v2 环境准备记录（2026-09-15）
+
+动机：v1 的问题集中在交付链——单文件 exe 每次启动解压到临时目录，壳再「取最近修改的 dist」，2026-09-15 21:01 启动仍失败（日志 `NavigationCompleted success=False error=ConnectionAborted`）。修这条链路的收益低于重做，故重开 v2。
+
+本次清理：
+
+- v1 打 tag `v1-mvp` 存档，C# 壳与旧界面都能取回
+- 删除 `desktop/`（壳源码 + bin/obj）、`release/`（旧 exe 与 WebView2 用户数据）、`dist/`、空的 `electron/`
+- 删除 v1 界面 `src/App.vue` 与 `src/components/`，换成最小骨架占位
+- 删除只服务旧壳的 `tests/unit/packaging.test.ts`；`package.json` 去掉 `pack:win`，版本升到 0.2.0
+- 保留 `src/core/` 与对应单测；保留 `rollup → @rollup/wasm-node` 的 override（本机应用控制策略拦原生 DLL，改回必崩）
+
+基线验证：`npm test` 14 项通过、`npm run build` 成功（两者都需在沙箱外执行）。
+
+下一步：从 `v2-features.md` 的 A1（单文件产物）开始。

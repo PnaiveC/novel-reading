@@ -1,6 +1,7 @@
 # 小说阅读器 MVP 规划
 
 > 更新时间：2026-09-01
+> 状态：v1 已完成并于 2026-09-15 冻结在 tag `v1-mvp`；C#/WebView2 交付壳与旧界面已删除。v2 见 [v2-features.md](v2-features.md) 与 [v2-plan.md](v2-plan.md)。
 
 ## 目标
 

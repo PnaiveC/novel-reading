@@ -1,14 +1,13 @@
 {
   "name": "novel-reading",
   "private": true,
-  "version": "0.1.0",
-  "description": "小说阅读器 MVP（本地 TXT 阅读）",
+  "version": "0.2.0",
+  "description": "本地 TXT 小说阅读器（个人自用，v2）",
   "author": "ai-power",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "pack:win": "npm run build && dotnet publish desktop/NovelReadingDemo/novel-reading-demo.csproj -c Release -r win-x64 -p:SelfContained=false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o release",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -1,42 +1,38 @@
 # novel-reading
 
-小说阅读器 MVP：本地 TXT 电子书阅读。
+本地 TXT 小说阅读器，个人自用。当前是 **v2**（重做版）；v1 的界面与 C#/WebView2 交付壳已删除，需要时用 `git show v1-mvp:<路径>` 取回。
+
+## 目标形态
+
+构建成**单个 HTML 文件**，双击用浏览器打开：无 .NET、无 WebView2、无安装步骤，断网可用。
 
 ## 开发
 
 ```bash
 npm install
-npm run dev     # 启动开发服务器
-npm test        # 运行测试
+npm run dev     # 开发服务器
+npm test        # 单元测试
 npm run build   # 类型检查 + 生产构建
 ```
 
-文档：
+## 文档
 
-- [docs/mvp-plan.md](docs/mvp-plan.md)：需求与规划
-- [docs/EXPERIENCE.md](docs/EXPERIENCE.md)：开发经验、环境坑、可优化方向与交接清单
+- [docs/v2-features.md](docs/v2-features.md)：v2 功能清单（A → B → C → D，逐个实现与验收）
+- [docs/v2-plan.md](docs/v2-plan.md)：v2 方案（交付形态、里程碑、验收标准）
+- [docs/mvp-plan.md](docs/mvp-plan.md)：v1 需求存档
+- [docs/EXPERIENCE.md](docs/EXPERIENCE.md)：环境坑与交接要点
 
-## 打包为 Windows exe
+## 当前目录
 
-```bash
-npm run pack:win
+```
+src/core/       编码检测、章节解析、进度存储（纯逻辑，单测覆盖）
+src/App.vue     v2 骨架占位，界面在 A2 / B4 / C1 中逐个实现
+tests/unit/     核心逻辑单测
+samples/        手测用样例小说
 ```
 
-产物为单文件 `release/novel-reading-demo.exe`（约 2MB，基于系统 WebView2
-内核，不内置 Chromium；页面、依赖已全部嵌入 exe）。
+## 环境注意事项（本机实测，别踩回头路）
 
-注意事项：
-
-- 打包前请先停止 `npm run dev` 开发服务器：Windows 下 Vite 的文件监听会
-  锁住 `release` 目录，导致发布步骤失败（EPERM）。
-- 构建需要 .NET 10 SDK；当前产物为 framework-dependent 单文件版，运行机器
-  需安装 .NET Desktop Runtime 10（本机已装，可直接运行）。
-- 运行需要系统 WebView2 运行时（Windows 10/11 通常已预装）。
-
-## 环境注意（Windows 应用控制策略）
-
-当前开发机的 Windows 应用控制策略会拦截 Node 加载 rollup 的原生绑定 DLL，
-导致 `vitest` / `vite build` 直接失败。为兼容该环境，`package.json` 通过
-`overrides` 将 `rollup` 整体替换为官方 WASM 实现 `@rollup/wasm-node`
-（版本与 rollup 保持一致）。若在其他无此限制的机器上开发，可移除该
-`overrides` 以恢复原生性能。
+- `package.json` 的 `overrides` 把 `rollup` 换成 `@rollup/wasm-node`：本机应用控制策略会拦截 rollup 原生绑定 DLL，改回原生会让 `vitest` / `vite build` 直接失败。
+- `npm test` / `npm run build` 会拉起 esbuild 子进程，沙箱内可能报 `EPERM`，需在沙箱外执行。
+- 首次安装依赖若走不通，用 npmmirror 镜像（本机 npm registry 已配置）。
