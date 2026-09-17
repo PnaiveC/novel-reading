@@ -51,8 +51,8 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
   width: 260px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e3ddd0;
-  background: #f4f1e9;
+  border-right: 1px solid var(--border, #e3ddd0);
+  background: var(--panel, #f4f1e9);
   min-height: 0;
 }
 
@@ -62,7 +62,7 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 12px;
-  border-bottom: 1px solid #e3ddd0;
+  border-bottom: 1px solid var(--border, #e3ddd0);
 }
 
 .toc-book {
@@ -71,14 +71,14 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #6d675c;
+  color: var(--fg, #6d675c);
   font-size: 13px;
 }
 
 .toc-close {
   border: none;
   background: transparent;
-  color: #8b8477;
+  color: var(--muted, #8b8477);
   font-size: 18px;
   line-height: 1;
   padding: 2px 6px;
@@ -102,25 +102,25 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
   background: transparent;
   padding: 6px 12px;
   text-align: left;
-  color: #4a463d;
+  color: var(--fg, #4a463d);
   font-size: 13px;
   line-height: 1.4;
   cursor: pointer;
 }
 
 .toc-item:hover {
-  background: #ebe6da;
+  background: var(--hover, #ebe6da);
 }
 
 .toc-item.active {
-  background: #e2dccc;
+  background: var(--active, #e2dccc);
   font-weight: 600;
 }
 
 .toc-num {
   flex: none;
   width: 2.4em;
-  color: #a8a192;
+  color: var(--muted, #a8a192);
   text-align: right;
 }
 
@@ -135,8 +135,8 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
 .toc-foot {
   flex: none;
   padding: 6px 12px;
-  border-top: 1px solid #e3ddd0;
-  color: #a8a192;
+  border-top: 1px solid var(--border, #e3ddd0);
+  color: var(--muted, #a8a192);
   font-size: 12px;
 }
 

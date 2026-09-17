@@ -7,6 +7,7 @@ import {
   StorageFullError,
   type StoredBook,
 } from '../../src/core/library'
+import { memoryStorage } from '../helpers/fakes'
 
 function makeBook(id: string): StoredBook {
   return {
@@ -76,6 +77,38 @@ describe('createLibrary（IndexedDB 后端）', () => {
     const stored = await library.getBook('a')
     expect(Array.from(stored?.bytes ?? [])).toEqual(Array.from(bytes))
     expect(stored?.encodingLocked).toBe(true)
+  })
+
+  it('最近打开列表：按上次打开时间倒序，不带正文（C5）', async () => {
+    const library = createLibrary({ indexedDb: new IDBFactory() })
+    await library.saveBook({ ...makeBook('a'), lastOpenedAt: 10 })
+    await library.saveBook({ ...makeBook('b'), lastOpenedAt: 30 })
+    await library.saveBook({ ...makeBook('c'), lastOpenedAt: 20 })
+
+    const list = await library.listBooks()
+    expect(list.map((book) => book.id)).toEqual(['b', 'c', 'a'])
+    expect(Object.keys(list[0] ?? {}).sort()).toEqual(['addedAt', 'id', 'lastOpenedAt', 'name', 'size'])
+  })
+
+  it('删掉一本书（C5）：列表里没了，它当过「上次那本」也不会再自动打开', async () => {
+    const library = createLibrary({ indexedDb: new IDBFactory() })
+    await library.saveBook(makeBook('a'))
+    await library.setLastBook('a')
+    await library.removeBook('a')
+
+    expect(await library.listBooks()).toEqual([])
+    expect(await library.getBook('a')).toBeNull()
+    expect(await library.getLastBook()).toBeNull()
+  })
+
+  it('localStorage 兜底后端同样能列书、删书', async () => {
+    const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+    await library.saveBook({ ...makeBook('a'), lastOpenedAt: 1 })
+    await library.saveBook({ ...makeBook('b'), lastOpenedAt: 2 })
+    expect((await library.listBooks()).map((book) => book.id)).toEqual(['b', 'a'])
+
+    await library.removeBook('b')
+    expect((await library.listBooks()).map((book) => book.id)).toEqual(['a'])
   })
 })
 

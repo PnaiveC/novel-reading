@@ -22,6 +22,32 @@ export interface Library {
   getBook(id: string): Promise<StoredBook | null>
   getLastBook(): Promise<StoredBook | null>
   setLastBook(id: string): Promise<void>
+  /** C5 最近打开列表：只要目录信息，不把整本书读进内存 */
+  listBooks(): Promise<BookSummary[]>
+  removeBook(id: string): Promise<void>
+}
+
+/** 书架上的一行（C5）：正文不进内存 */
+export interface BookSummary {
+  id: string
+  name: string
+  size: number
+  addedAt: number
+  lastOpenedAt: number
+}
+
+function summarize(book: StoredBook): BookSummary {
+  return {
+    id: book.id,
+    name: book.name,
+    size: book.size,
+    addedAt: book.addedAt,
+    lastOpenedAt: book.lastOpenedAt,
+  }
+}
+
+function byRecent(a: BookSummary, b: BookSummary): number {
+  return b.lastOpenedAt - a.lastOpenedAt || a.name.localeCompare(b.name)
 }
 
 /** localStorage 只能存字符串：落盘时把字节转 base64，读回时转回来 */
@@ -123,6 +149,13 @@ function indexedDbLibrary(db: IDBDatabase): Library {
     return row?.value ?? null
   }
 
+  const writeMeta = async (key: string, value: string | null): Promise<void> => {
+    const tx = db.transaction(META, 'readwrite')
+    if (value === null) tx.objectStore(META).delete(key)
+    else tx.objectStore(META).put({ key, value })
+    await transactionDone(tx)
+  }
+
   return {
     saveBook: async (book) => {
       const tx = db.transaction(BOOKS, 'readwrite')
@@ -145,6 +178,30 @@ function indexedDbLibrary(db: IDBDatabase): Library {
       const tx = db.transaction(META, 'readwrite')
       tx.objectStore(META).put({ key: LAST_BOOK_KEY, value: id })
       await transactionDone(tx)
+    },
+    listBooks: async () => {
+      const tx = db.transaction(BOOKS, 'readonly')
+      const rows = await new Promise<StoredBook[]>((resolve, reject) => {
+        const items: StoredBook[] = []
+        const req = tx.objectStore(BOOKS).openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) {
+            resolve(items)
+            return
+          }
+          items.push(cursor.value as StoredBook)
+          cursor.continue()
+        }
+        req.onerror = () => reject(req.error ?? new Error('IndexedDB 读取失败'))
+      })
+      return rows.map(summarize).sort(byRecent)
+    },
+    removeBook: async (id) => {
+      const tx = db.transaction(BOOKS, 'readwrite')
+      tx.objectStore(BOOKS).delete(id)
+      await transactionDone(tx)
+      if ((await readMeta(LAST_BOOK_KEY)) === id) await writeMeta(LAST_BOOK_KEY, null)
     },
   }
 }
@@ -183,6 +240,23 @@ function localLibrary(provided?: Storage | null): Library {
     return parseStoredBook(raw)
   }
 
+  const keys = (): string[] => {
+    const store = resolveStorage()
+    if (!store) return Array.from(memory.keys())
+    const result: string[] = []
+    for (let index = 0; index < store.length; index++) {
+      const key = store.key(index)
+      if (key) result.push(key)
+    }
+    return result
+  }
+
+  const drop = (key: string): void => {
+    const store = resolveStorage()
+    if (store) store.removeItem(key)
+    else memory.delete(key)
+  }
+
   return {
     saveBook: async (book) => {
       const key = bookStorageKey(book.id)
@@ -202,6 +276,19 @@ function localLibrary(provided?: Storage | null): Library {
       return id ? readBook(id) : null
     },
     setLastBook: async (id) => write(lastBookStorageKey(), id),
+    listBooks: async () => {
+      const prefix = bookStorageKey('')
+      return keys()
+        .filter((key) => key.startsWith(prefix))
+        .map((key) => parseStoredBook(read(key) ?? ''))
+        .filter((book): book is StoredBook => Boolean(book))
+        .map(summarize)
+        .sort(byRecent)
+    },
+    removeBook: async (id) => {
+      drop(bookStorageKey(id))
+      if (read(lastBookStorageKey()) === id) drop(lastBookStorageKey())
+    },
   }
 }
 
@@ -237,5 +324,7 @@ export function createLibrary(options: LibraryOptions = {}): Library {
     getBook: async (id) => (await pick()).getBook(id),
     getLastBook: async () => (await pick()).getLastBook(),
     setLastBook: async (id) => (await pick()).setLastBook(id),
+    listBooks: async () => (await pick()).listBooks(),
+    removeBook: async (id) => (await pick()).removeBook(id),
   }
 }

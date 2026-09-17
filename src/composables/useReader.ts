@@ -55,7 +55,15 @@ export function useReader(options: UseReaderOptions = {}) {
 
   const chapters = computed(() => book.value?.chapters ?? [])
   const chapter = computed(() => chapters.value[chapterIndex.value] ?? null)
-  const paragraphs = computed(() => (chapter.value ? splitParagraphs(chapter.value.content) : []))
+  /**
+   * C4 连续阅读要一次渲染好几章，段落按章切好缓存在这儿；
+   * 只依赖书与编码（revision），滚动、改字号都不会重切。
+   */
+  const chapterParagraphs = computed(() => chapters.value.map((item) => splitParagraphs(item.content)))
+  const paragraphs = computed(() => chapterParagraphs.value[chapterIndex.value] ?? [])
+  function paragraphsOf(index: number): string[] {
+    return chapterParagraphs.value[index] ?? []
+  }
   const hasPrev = computed(() => chapterIndex.value > 0)
   const hasNext = computed(() => chapterIndex.value < chapters.value.length - 1)
   const encoding = computed<Encoding>(() => book.value?.encoding ?? 'utf-8')
@@ -141,6 +149,20 @@ export function useReader(options: UseReaderOptions = {}) {
     }
   }
 
+  /** 从本机取出的一本书上屏（C5 换书与 A3 自动回到上次那本共用这条） */
+  async function loadStored(record: StoredBook): Promise<void> {
+    stored = record
+    rawBytes.value = record.bytes?.length ? record.bytes : null
+    encodingLocked.value = Boolean(record.encodingLocked)
+    const loaded = record.bytes?.length
+      ? loadBookFromBytes(record.name, record.bytes, record.encoding)
+      : bookFromText(record)
+    show(loaded, progressOf(loaded))
+    anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
+    // 重开这本书，视作一次打开，让「最近」顺序保持正确
+    await remember(loaded)
+  }
+
   /** 启动时自动回到上次那本书（A3） */
   async function restoreLastBook(): Promise<void> {
     status.value = 'loading'
@@ -150,16 +172,20 @@ export function useReader(options: UseReaderOptions = {}) {
         status.value = 'empty'
         return
       }
-      stored = last
-      rawBytes.value = last.bytes?.length ? last.bytes : null
-      encodingLocked.value = Boolean(last.encodingLocked)
-      const loaded = last.bytes?.length
-        ? loadBookFromBytes(last.name, last.bytes, last.encoding)
-        : bookFromText(last)
-      show(loaded, progressOf(loaded))
-      anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
-      // 重开这本书，视作一次打开，让「最近」顺序保持正确
-      await remember(loaded)
+      await loadStored(last)
+    } catch (error) {
+      errorMessage.value = messageOf(error)
+      status.value = 'error'
+    }
+  }
+
+  /** C5：从「最近打开」里挑一本接着读 */
+  async function openStored(id: string): Promise<void> {
+    status.value = 'loading'
+    try {
+      const record = await library.getBook(id)
+      if (!record) throw new Error('这本书已经不在本机了')
+      await loadStored(record)
     } catch (error) {
       errorMessage.value = messageOf(error)
       status.value = 'error'
@@ -192,22 +218,64 @@ export function useReader(options: UseReaderOptions = {}) {
     if (!book.value) return
     anchorIndex.value = Math.max(0, Math.floor(paragraphIndex))
     anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
+    persistProgress()
+  }
+
+  /** 位置写盘：带上章节总数与百分比，C5 的最近打开列表直接显示 */
+  function persistProgress(): void {
+    if (!book.value) return
     const progress: ReadingProgress = {
       chapterIndex: chapterIndex.value,
       paragraphIndex: anchorIndex.value,
       updatedAt: now(),
+      chapterCount: chapters.value.length,
+      percent: percent.value,
     }
     saveProgress(book.value.id, progress)
   }
 
-  function goToChapter(index: number): void {
+  /**
+   * C4：滚动读出来的位置，只同步状态、不重新落位（界面因此不会被拽回去）。
+   * 和旧位置一样就什么都不做，免得每帧都写盘。
+   */
+  function setPosition(nextChapter: number, nextParagraph: number): void {
+    if (!book.value) return
+    const chapter = clampChapter(nextChapter)
+    if (chapter === null) return
+    const paragraph = clampParagraph(chapter, nextParagraph)
+    if (chapter === chapterIndex.value && paragraph === anchorIndex.value) return
+    chapterIndex.value = chapter
+    anchorIndex.value = paragraph
+    anchorMemory = { chapterIndex: chapter, paragraphIndex: paragraph }
+    persistProgress()
+  }
+
+  /** 跳章 / 点书签：改位置并让界面重新落位到锚点 */
+  function jumpTo(nextChapter: number, nextParagraph: number): void {
+    if (!book.value) return
+    const chapter = clampChapter(nextChapter)
+    if (chapter === null) return
+    const paragraph = clampParagraph(chapter, nextParagraph)
+    chapterIndex.value = chapter
+    anchorIndex.value = paragraph
+    anchorMemory = { chapterIndex: chapter, paragraphIndex: paragraph }
+    persistProgress()
+    revision.value++
+  }
+
+  function clampChapter(index: number): number | null {
     const last = chapters.value.length - 1
-    if (last < 0) return
-    const next = Math.min(Math.max(index, 0), last)
-    if (next === chapterIndex.value) return
-    chapterIndex.value = next
-    anchorIndex.value = 0
-    rememberPosition(0)
+    if (last < 0) return null
+    return Math.min(Math.max(Math.floor(index), 0), last)
+  }
+
+  function clampParagraph(chapter: number, index: number): number {
+    const maxParagraph = Math.max(0, (chapterParagraphs.value[chapter]?.length ?? 1) - 1)
+    return Math.min(Math.max(Math.floor(index), 0), maxParagraph)
+  }
+
+  function goToChapter(index: number): void {
+    jumpTo(index, 0)
   }
 
   return {
@@ -221,6 +289,8 @@ export function useReader(options: UseReaderOptions = {}) {
     anchorIndex,
     revision,
     paragraphs,
+    paragraphsOf,
+    chapterParagraphs,
     hasPrev,
     hasNext,
     chapterLabel,
@@ -231,11 +301,18 @@ export function useReader(options: UseReaderOptions = {}) {
     encodingLocked,
     openFile,
     restoreLastBook,
+    openStored,
     setEncoding,
     rememberPosition,
+    setPosition,
+    jumpTo,
     goToChapter,
-    nextChapter: () => goToChapter(chapterIndex.value + 1),
-    prevChapter: () => goToChapter(chapterIndex.value - 1),
+    nextChapter: () => {
+      if (chapterIndex.value < chapters.value.length - 1) jumpTo(chapterIndex.value + 1, 0)
+    },
+    prevChapter: () => {
+      if (chapterIndex.value > 0) jumpTo(chapterIndex.value - 1, 0)
+    },
     clearNotice: () => {
       notice.value = ''
     },

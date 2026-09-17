@@ -1,3 +1,5 @@
+import { isThemeId, type ThemeId } from './theme'
+
 export type FontId = 'song' | 'hei' | 'kai' | 'system'
 
 /** 阅读排版设置（B4）：全部落在 CSS 变量上，改一个数字立刻见效 */
@@ -13,7 +15,8 @@ export interface ReadingSettings {
   /** 首行缩进字符数 */
   indent: 0 | 2
   fontFamily: FontId
-  theme: 'light' | 'sepia' | 'dark'
+  /** C1 主题：日间 / 护眼 / 夜间 / 跟随系统 */
+  theme: ThemeId
 }
 
 export const FONT_STACKS: Record<FontId, string> = {
@@ -80,6 +83,6 @@ export function normalizeSettings(input: Partial<ReadingSettings> | null | undef
     ),
     indent: source.indent === 0 ? 0 : DEFAULT_SETTINGS.indent,
     fontFamily: source.fontFamily && source.fontFamily in FONT_STACKS ? source.fontFamily : DEFAULT_SETTINGS.fontFamily,
-    theme: source.theme === 'sepia' || source.theme === 'dark' ? source.theme : 'light',
+    theme: isThemeId(source.theme) ? source.theme : DEFAULT_SETTINGS.theme,
   }
 }

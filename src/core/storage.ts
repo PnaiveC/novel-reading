@@ -1,5 +1,8 @@
+import { normalizeBookmarks, type Bookmark } from './bookmarks'
 import { usableLocalStorage } from './webStorage'
 import { normalizeSettings, type ReadingSettings } from './settings'
+import { normalizeShortcuts, type ShortcutBindings } from './shortcuts'
+import { normalizeUiPrefs, type UiPrefs } from './uiPrefs'
 
 export type { ReadingSettings } from './settings'
 
@@ -8,6 +11,9 @@ export interface ReadingProgress {
   /** 章节内段落锚点（A4）：重开后位置误差不超过一屏 */
   paragraphIndex: number
   updatedAt: number
+  /** 上次读到时的章节总数与全书百分比（C5 最近打开列表直接显示，不用再翻整本书） */
+  chapterCount?: number
+  percent?: number
 }
 
 const PREFIX = 'novel-reading:'
@@ -55,6 +61,8 @@ export function loadProgress(key: string): ReadingProgress | null {
       // v1 只记到章节，回填成第 0 段
       paragraphIndex: typeof data.paragraphIndex === 'number' ? data.paragraphIndex : 0,
       updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : 0,
+      ...(typeof data.chapterCount === 'number' ? { chapterCount: data.chapterCount } : {}),
+      ...(typeof data.percent === 'number' ? { percent: data.percent } : {}),
     }
   } catch {
     return null
@@ -98,6 +106,64 @@ export function loadSettings(): ReadingSettings | null {
     return normalizeSettings(JSON.parse(raw) as Partial<ReadingSettings>)
   } catch {
     return null
+  }
+}
+
+/* ------------------------------------------------------------ C3 快捷键 */
+
+export function saveShortcuts(bindings: ShortcutBindings): void {
+  writeItem(`${PREFIX}shortcuts`, JSON.stringify(normalizeShortcuts(bindings)))
+}
+
+export function loadShortcuts(): ShortcutBindings {
+  const raw = readItem(`${PREFIX}shortcuts`)
+  if (!raw) return normalizeShortcuts(null)
+  try {
+    return normalizeShortcuts(JSON.parse(raw))
+  } catch {
+    return normalizeShortcuts(null)
+  }
+}
+
+/* ------------------------------------------------------------ C7 书签 */
+
+function bookmarksKey(bookId: string): string {
+  return `${PREFIX}bookmarks:${bookId}`
+}
+
+export function saveBookmarks(bookId: string, list: readonly Bookmark[]): void {
+  writeItem(bookmarksKey(bookId), JSON.stringify(list))
+}
+
+export function loadBookmarks(bookId: string): Bookmark[] {
+  const raw = readItem(bookmarksKey(bookId))
+  if (!raw) return []
+  try {
+    return normalizeBookmarks(JSON.parse(raw))
+  } catch {
+    return []
+  }
+}
+
+export function removeBookmarks(bookId: string): void {
+  const store = getStore()
+  if (store) store.removeItem(bookmarksKey(bookId))
+  else fallback.delete(bookmarksKey(bookId))
+}
+
+/* ------------------------------------------------------------ C2 界面偏好 */
+
+export function saveUiPrefs(prefs: UiPrefs): void {
+  writeItem(`${PREFIX}ui`, JSON.stringify(normalizeUiPrefs(prefs)))
+}
+
+export function loadUiPrefs(): UiPrefs {
+  const raw = readItem(`${PREFIX}ui`)
+  if (!raw) return normalizeUiPrefs(null)
+  try {
+    return normalizeUiPrefs(JSON.parse(raw))
+  } catch {
+    return normalizeUiPrefs(null)
   }
 }
 

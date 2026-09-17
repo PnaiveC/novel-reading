@@ -3,7 +3,14 @@ import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/tes
 import App from '../../src/App.vue'
 import { computeBookId } from '../../src/core/book'
 import { createLibrary, type StoredBook } from '../../src/core/library'
-import { clearStorage, loadSettings, loadProgress } from '../../src/core/storage'
+import {
+  clearStorage,
+  loadBookmarks,
+  loadProgress,
+  loadSettings,
+  loadShortcuts,
+  loadUiPrefs,
+} from '../../src/core/storage'
 import { memoryStorage } from '../helpers/fakes'
 
 const encoder = new TextEncoder()
@@ -57,6 +64,12 @@ function rootStyle(wrapper: VueWrapper): CSSStyleDeclaration {
 
 async function pressKey(key: string): Promise<void> {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true }))
+  await flushPromises()
+}
+
+/** 改键录制时用：从 body 派发，事件才会走「window 捕获 → body」这条路 */
+async function pressKeyOnBody(key: string): Promise<void> {
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
   await flushPromises()
 }
 
@@ -228,5 +241,260 @@ describe('编码切换接进界面（B1）', () => {
     const encodingSelect = wrapper.findAll('.panel select')[2]
     expect(encodingSelect.attributes('disabled')).toBeDefined()
     expect(wrapper.find('.panel .hint').text()).toContain('重新拖入原文件')
+  })
+})
+
+describe('主题（C1）', () => {
+  it('默认日间；换夜间 / 护眼 / 跟随系统都落到 html 上并落盘', async () => {
+    const wrapper = await mountApp()
+    expect(document.documentElement.dataset.theme).toBe('light')
+
+    await buttonByText(wrapper, '排版').trigger('click')
+    const theme = wrapper.findAll('.panel select')[3]
+
+    ;(theme.element as HTMLSelectElement).value = 'dark'
+    await theme.trigger('change')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(loadSettings()?.theme).toBe('dark')
+
+    ;(theme.element as HTMLSelectElement).value = 'sepia'
+    await theme.trigger('change')
+    expect(document.documentElement.dataset.theme).toBe('sepia')
+
+    ;(theme.element as HTMLSelectElement).value = 'auto'
+    await theme.trigger('change')
+    // jsdom 没有 matchMedia，「跟随系统」按浅色算，不该炸
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(loadSettings()?.theme).toBe('auto')
+  })
+
+  it('T 键循环主题，不动正文', async () => {
+    const wrapper = await mountApp()
+    await pressKey('t')
+    expect(document.documentElement.dataset.theme).toBe('sepia')
+    expect(wrapper.find('.chapter-name').text()).toBe('第一章 初见')
+    await pressKey('t')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+})
+
+describe('沉浸模式（C2）', () => {
+  it('M 键开沉浸：工具栏收起，鼠标靠顶 / 靠底才露出来；Esc 退出', async () => {
+    const wrapper = await mountApp()
+    await pressKey('m')
+
+    expect(loadUiPrefs().immersive).toBe(true)
+    expect(wrapper.find('.app').classes()).toContain('immersive')
+    expect(wrapper.find('.bar').classes()).toContain('hidden')
+    expect(wrapper.find('.status').classes()).toContain('hidden')
+
+    await wrapper.find('.app').trigger('mousemove', { clientY: 12 })
+    expect(wrapper.find('.bar').classes()).not.toContain('hidden')
+    expect(wrapper.find('.status').classes()).toContain('hidden')
+
+    await wrapper.find('.app').trigger('mousemove', { clientY: window.innerHeight - 10 })
+    expect(wrapper.find('.status').classes()).not.toContain('hidden')
+
+    await wrapper.find('.app').trigger('mouseleave')
+    expect(wrapper.find('.bar').classes()).toContain('hidden')
+    expect(wrapper.find('.status').classes()).toContain('hidden')
+
+    await pressKey('Escape')
+    expect(loadUiPrefs().immersive).toBe(false)
+    expect(wrapper.find('.app').classes()).not.toContain('immersive')
+  })
+})
+
+describe('快捷键（C3）', () => {
+  it('默认键位：d 目录、w 排版、b 书签、r 最近，再按一次收起', async () => {
+    const wrapper = await mountApp()
+
+    await pressKey('d')
+    expect(wrapper.find('.toc').exists()).toBe(true)
+    await pressKey('d')
+    expect(wrapper.find('.toc').exists()).toBe(false)
+
+    await pressKey('w')
+    expect(wrapper.find('.panel').exists()).toBe(true)
+    await pressKey('Escape')
+    expect(wrapper.find('.panel').exists()).toBe(false)
+
+    await pressKey('b')
+    expect(wrapper.find('.bookmarks').exists()).toBe(true)
+    await pressKey('Escape')
+
+    await pressKey('r')
+    await flushPromises()
+    expect(wrapper.find('.recent').exists()).toBe(true)
+  })
+
+  it('自己改键：录一个新键，旧键失效、新键生效；撞键被拒绝；能恢复默认', async () => {
+    const wrapper = await mountApp()
+    await pressKey('w')
+    await buttonByText(wrapper, '快捷键').trigger('click')
+    expect(wrapper.find('.shortcuts').exists()).toBe(true)
+
+    const tocRow = wrapper.findAll('.shortcuts .row').find((row) => row.text().includes('目录'))!
+    await tocRow.find('.set').trigger('click')
+    await pressKeyOnBody('k')
+    expect(loadShortcuts().toc).toEqual(['k'])
+    expect(wrapper.find('.shortcuts .message').text()).toContain('目录')
+
+    // w 是「排版与设置」的键，改键撞上要被拒绝
+    await tocRow.find('.set').trigger('click')
+    await pressKeyOnBody('w')
+    expect(loadShortcuts().toc).toEqual(['k'])
+    expect(wrapper.find('.shortcuts .message').text()).toContain('排版与设置')
+
+    await wrapper.findAll('.shortcuts button').find((item) => item.text() === '恢复默认')!.trigger('click')
+    expect(loadShortcuts().toc).toEqual(['d'])
+
+    await pressKey('Escape')
+    await pressKey('d')
+    expect(wrapper.find('.toc').exists()).toBe(true)
+  })
+})
+
+describe('连续阅读（C4）', () => {
+  it('正文里连着渲染下一章，滚动条一路往下就接上了', async () => {
+    const wrapper = await mountApp()
+    const sections = wrapper.findAll('[data-chapter]')
+    expect(sections.length).toBeGreaterThan(1)
+    expect(sections[0].find('.chapter-title').text()).toBe('第一章 初见')
+    expect(sections[1].find('.chapter-title').text()).toBe('第二章 重逢')
+    expect(sections[1].find('.para').text()).toBe('正文二。')
+  })
+
+  it('翻到下一章时窗口跟着往后长，当前章高亮与位置提示同步', async () => {
+    const wrapper = await mountApp()
+    await pressKey('ArrowRight')
+    await pressKey('ArrowRight')
+    expect(wrapper.find('.chapter-name').text()).toBe('第三章 远行')
+    expect(wrapper.findAll('[data-chapter="3"]').length).toBe(1)
+    expect(wrapper.find('.pos').text()).toMatch(/^第 3\/5 章 · 全书 \d+%$/)
+  })
+})
+
+describe('最近打开列表（C5）', () => {
+  const OTHER_NOVEL = ['第一章 另一本', '别的正文。', '', '第二章 结束', '收尾。'].join('\n')
+
+  async function mountTwoBooks() {
+    const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+    const bytesA = encoder.encode(TOC_NOVEL)
+    const bytesB = encoder.encode(OTHER_NOVEL)
+    const idA = computeBookId(bytesA)
+    const idB = computeBookId(bytesB)
+    const books: StoredBook[] = [
+      {
+        id: idA,
+        name: '长篇.txt',
+        size: bytesA.length,
+        encoding: 'utf-8',
+        text: TOC_NOVEL,
+        bytes: bytesA,
+        addedAt: 1,
+        lastOpenedAt: 1,
+      },
+      {
+        id: idB,
+        name: '另一本.txt',
+        size: bytesB.length,
+        encoding: 'utf-8',
+        text: OTHER_NOVEL,
+        bytes: bytesB,
+        addedAt: 2,
+        lastOpenedAt: 2,
+      },
+    ]
+    for (const book of books) await library.saveBook(book)
+    await library.setLastBook(idA)
+    const wrapper = mount(App, { props: { library } })
+    await flushPromises()
+    return { wrapper, library, idA, idB }
+  }
+
+  function rowOf(wrapper: VueWrapper, name: string): DOMWrapper<HTMLElement> {
+    const row = wrapper.findAll('.recent .row').find((item) => item.text().includes(name))
+    if (!row) throw new Error(`最近列表里没有 ${name}`)
+    return row as DOMWrapper<HTMLElement>
+  }
+
+  it('列出本机的书与进度，点一本就切过去，各自的位置都不丢', async () => {
+    const { wrapper } = await mountTwoBooks()
+    await pressKey('ArrowRight')
+
+    await pressKey('r')
+    await flushPromises()
+    expect(wrapper.findAll('.recent .row')).toHaveLength(2)
+    expect(rowOf(wrapper, '长篇.txt').text()).toContain('第 2/5 章')
+    expect(rowOf(wrapper, '长篇.txt').text()).toContain('在读')
+
+    await rowOf(wrapper, '另一本.txt').find('.open').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.book-name').text()).toBe('另一本.txt')
+    expect(wrapper.find('.chapter-name').text()).toBe('第一章 另一本')
+    expect(wrapper.find('.recent').exists()).toBe(false)
+
+    await pressKey('r')
+    await flushPromises()
+    expect(rowOf(wrapper, '另一本.txt').text()).toContain('在读')
+    expect(rowOf(wrapper, '长篇.txt').text()).toContain('第 2/5 章')
+  })
+
+  it('删掉一本：本机记录没了，当前在读的那本删了也不打断这次阅读', async () => {
+    const { wrapper, library, idA, idB } = await mountTwoBooks()
+    await pressKey('r')
+    await flushPromises()
+
+    await rowOf(wrapper, '另一本.txt').find('.del').trigger('click')
+    await flushPromises()
+    expect(await library.getBook(idB)).toBeNull()
+    expect(rowOf(wrapper, '长篇.txt').text()).toContain('长篇.txt')
+    expect(wrapper.findAll('.recent .row')).toHaveLength(1)
+
+    await rowOf(wrapper, '长篇.txt').find('.del').trigger('click')
+    await flushPromises()
+    expect(await library.listBooks()).toEqual([])
+    expect(await library.getBook(idA)).toBeNull()
+    expect(wrapper.find('.chapter-name').text()).toBe('第一章 初见')
+    expect(wrapper.find('.status').text()).toContain('已从本机删掉')
+  })
+})
+
+describe('书签（C7）', () => {
+  it('A 加书签并落盘，书签列表点一条跳回去，也能删掉', async () => {
+    const wrapper = await mountApp()
+    const bookId = computeBookId(encoder.encode(TOC_NOVEL))
+
+    await pressKey('ArrowRight')
+    await pressKey('a')
+    expect(loadBookmarks(bookId)).toHaveLength(1)
+    expect(loadBookmarks(bookId)[0]?.chapterTitle).toBe('第二章 重逢')
+    expect(loadBookmarks(bookId)[0]?.excerpt).toBe('正文二。')
+    expect(wrapper.find('.status').text()).toContain('已加书签')
+
+    await pressKey('ArrowRight')
+    expect(wrapper.find('.chapter-name').text()).toBe('第三章 远行')
+
+    await pressKey('b')
+    expect(wrapper.find('.bookmarks').exists()).toBe(true)
+    expect(wrapper.find('.bookmarks .row').text()).toContain('第二章 重逢')
+
+    await wrapper.find('.bookmarks .row .open').trigger('click')
+    expect(wrapper.find('.chapter-name').text()).toBe('第二章 重逢')
+    expect(wrapper.find('.bookmarks').exists()).toBe(false)
+
+    await pressKey('b')
+    await wrapper.find('.bookmarks .row .del').trigger('click')
+    expect(loadBookmarks(bookId)).toEqual([])
+    expect(wrapper.find('.bookmarks .empty').text()).toContain('还没有书签')
+  })
+
+  it('换一本书不串书签：各是各的', async () => {
+    await mountApp()
+    const bookId = computeBookId(encoder.encode(TOC_NOVEL))
+    await pressKey('a')
+    expect(loadBookmarks(bookId)).toHaveLength(1)
+    expect(loadBookmarks('hash-other')).toEqual([])
   })
 })

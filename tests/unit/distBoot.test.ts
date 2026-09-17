@@ -59,7 +59,11 @@ describe('单文件产物能自启动（先跑 npm run build）', () => {
 
     const doc = dom.window.document
     expect(doc.querySelector('.chapter-name')?.textContent).toBe('第一章 初见')
-    expect(doc.querySelectorAll('.para')).toHaveLength(1)
+    // C4 连读：第一章后面紧接着渲染第二章
+    expect(doc.querySelectorAll('.chapter-title')[0]?.textContent).toBe('第一章 初见')
+    expect(doc.querySelectorAll('.chapter-title')[1]?.textContent).toBe('第二章 重逢')
+    expect(doc.querySelectorAll('.para')).toHaveLength(2)
+    expect(doc.documentElement.dataset.theme).toBe('light')
 
     const tocButton = Array.from(doc.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === '目录',
