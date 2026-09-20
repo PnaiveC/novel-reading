@@ -36,8 +36,37 @@ function deniedIndexedDb(): IDBFactory {
   } as unknown as IDBFactory
 }
 
+/** 模拟 file:// 下另一种表现：open 出去就再也没有回话 */
+function silentIndexedDb(): IDBFactory {
+  return {
+    open() {
+      return {} as unknown as IDBOpenDBRequest
+    },
+  } as unknown as IDBFactory
+}
+
 beforeEach(() => {
   window.localStorage.clear()
+})
+
+describe('createLibrary：本地书库不回话时不能把用户卡住', () => {
+  it('IndexedDB 打开超时 → 退回 localStorage，书照样存得住', async () => {
+    const store = memoryStorage()
+    const library = createLibrary({
+      indexedDb: silentIndexedDb(),
+      storage: store,
+      idbTimeoutMs: 20,
+    })
+    const book = makeBook('timeout')
+    const started = Date.now()
+    await library.saveBook(book)
+    await library.setLastBook(book.id)
+
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect((await library.getLastBook())?.id).toBe('timeout')
+    expect(await library.getBook('timeout')).toMatchObject({ name: 'timeout.txt' })
+    expect(store.getItem(`novel-reading:book:timeout`)).toContain('timeout.txt')
+  })
 })
 
 describe('createLibrary（IndexedDB 后端）', () => {

@@ -78,6 +78,8 @@ export interface LibraryOptions {
   indexedDb?: IDBFactory | null
   storage?: Storage | null
   dbName?: string
+  /** 等 IndexedDB 开口最多等多久（file:// 下有的浏览器会一直不回话） */
+  idbTimeoutMs?: number
 }
 
 /** 本地放不下（配额满、浏览器不给存）时抛出，交给界面提示用户 */
@@ -94,6 +96,7 @@ const DB_VERSION = 1
 const BOOKS = 'books'
 const META = 'meta'
 const LAST_BOOK_KEY = 'lastBookId'
+export const IDB_OPEN_TIMEOUT = 1500
 
 function lastBookStorageKey(): string {
   return `${PREFIX}${LAST_BOOK_KEY}`
@@ -302,11 +305,25 @@ async function selectBackend(options: LibraryOptions): Promise<Library> {
         ? indexedDB
         : null
   if (factory) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const opening = openDatabase(factory, options.dbName ?? DEFAULT_DB_NAME)
     try {
-      const db = await openDatabase(factory, options.dbName ?? DEFAULT_DB_NAME)
+      const db = await Promise.race([
+        opening,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('IndexedDB 打开超时')),
+            options.idbTimeoutMs ?? IDB_OPEN_TIMEOUT,
+          )
+        }),
+      ])
       return indexedDbLibrary(db)
     } catch {
-      // IndexedDB 不可用（file:// 打开时部分浏览器会拒绝），退回 localStorage
+      // IndexedDB 不可用（file:// 打开时有的浏览器直接拒绝、有的干脆不回话），
+      // 迟到的连接自己关掉，退回 localStorage——不能把用户卡在「正在打开…」
+      void opening.then((db) => db.close()).catch(() => undefined)
+    } finally {
+      clearTimeout(timer)
     }
   }
   return localLibrary(options.storage)
