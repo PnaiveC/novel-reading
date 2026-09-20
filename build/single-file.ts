@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { OutputAsset, OutputBundle } from 'rollup'
 import type { Plugin } from 'vite'
 
@@ -69,8 +71,12 @@ function isHtml(file: OutputAsset): boolean {
   return file.fileName.endsWith('.html')
 }
 
+/** 根目录下双击即读的交付文件：构建完顺带抄一份过去，省得再手动复制 */
+export const DELIVERY_FILE = 'index.html'
+
 /** 构建产物必须只剩一个自包含 HTML，否则直接失败，不给「白屏」留机会 */
 export function singleFilePlugin(): Plugin {
+  let built: string | null = null
   return {
     name: 'novel-reading:single-file',
     apply: 'build',
@@ -100,7 +106,19 @@ export function singleFilePlugin(): Plugin {
       const refs = findExternalRefs(html)
       if (refs.length) throw new Error(`[single-file] 产物仍引用外部文件：${refs.join(', ')}`)
       htmlFile.source = html
+      // 入口在 src/ 下，产物名字对齐成 dist/index.html
+      if (htmlFile.fileName !== DELIVERY_FILE) {
+        delete bundle[htmlFile.fileName]
+        htmlFile.fileName = DELIVERY_FILE
+        bundle[DELIVERY_FILE] = htmlFile
+      }
+      built = html
       this.warn(`[single-file] 已内联 ${assets.length} 个资源，产物 ${html.length} 字符`)
+    },
+    writeBundle() {
+      if (built === null) return
+      writeFileSync(resolve(process.cwd(), DELIVERY_FILE), built, 'utf8')
+      this.warn(`[single-file] 交付文件已更新：${DELIVERY_FILE}（双击即读）`)
     },
   }
 }

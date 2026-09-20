@@ -2,7 +2,12 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { OutputBundle } from 'rollup'
 import { describe, expect, it } from 'vitest'
-import { findExternalRefs, inlineSingleFile, singleFilePlugin } from '../../build/single-file'
+import {
+  DELIVERY_FILE,
+  findExternalRefs,
+  inlineSingleFile,
+  singleFilePlugin,
+} from '../../build/single-file'
 
 const HTML = `<!doctype html>
 <html><head>
@@ -78,14 +83,58 @@ describe('singleFilePlugin', () => {
     expect(html).toContain('body{color:red}')
     expect(findExternalRefs(html)).toEqual([])
   })
+
+  it('入口在 src/ 下时，产物名字对齐成根目录那份交付文件', () => {
+    const bundle = {
+      'src/index.html': { type: 'asset', fileName: 'src/index.html', source: HTML },
+      'assets/index-abc.js': { type: 'chunk', fileName: 'assets/index-abc.js', code: 'boot()' },
+      'assets/style-abc.css': {
+        type: 'asset',
+        fileName: 'assets/style-abc.css',
+        source: 'body{color:red}',
+      },
+    } as unknown as OutputBundle
+
+    const plugin = singleFilePlugin()
+    ;(plugin.generateBundle as (this: unknown, options: unknown, bundle: OutputBundle) => void).call(
+      { warn: () => undefined },
+      {},
+      bundle,
+    )
+
+    expect(Object.keys(bundle)).toEqual([DELIVERY_FILE])
+    const html = String((bundle[DELIVERY_FILE] as { source: string }).source)
+    expect(html).toContain('boot()')
+    expect(html).toContain('body{color:red}')
+  })
 })
 
 const distHtml = join(process.cwd(), 'dist', 'index.html')
+const rootHtml = join(process.cwd(), DELIVERY_FILE)
+const entryHtml = join(process.cwd(), 'src', 'index.html')
+
+describe('构建入口', () => {
+  it('源码入口在 src/index.html：根目录那份是产物，不能拿来当入口', () => {
+    // 踩过的坑：把构建产物挪到根目录当入口后，产物里的内联脚本会被当成模板照抄，
+    // 源码再也进不去产物（`npm run build` 变成空跑）。
+    const html = readFileSync(entryHtml, 'utf8')
+    expect(html).toContain('<div id="app">')
+    expect(html).toContain('type="module"')
+    expect(html).toContain('/src/main.ts')
+    expect(html).not.toContain('@vue/shared')
+  })
+})
 
 describe('构建产物', () => {
   it.skipIf(!existsSync(distHtml))('dist/index.html 自包含（先跑 npm run build）', () => {
     const html = readFileSync(distHtml, 'utf8')
     expect(findExternalRefs(html)).toEqual([])
     expect(html).toContain('<div id="app">')
+  })
+
+  it.skipIf(!existsSync(distHtml))('根目录的交付文件与 dist 产物一致（双击的就是新的）', () => {
+    expect(existsSync(rootHtml)).toBe(true)
+    expect(readFileSync(rootHtml, 'utf8')).toBe(readFileSync(distHtml, 'utf8'))
+    expect(findExternalRefs(readFileSync(rootHtml, 'utf8'))).toEqual([])
   })
 })

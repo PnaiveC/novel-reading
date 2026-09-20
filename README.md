@@ -10,10 +10,16 @@
 
 ```bash
 npm install
-npm run dev     # 开发服务器
+npm run dev     # 开发服务器（源码入口在 src/index.html）
 npm test        # 单元测试
-npm run build   # 类型检查 + 生产构建
+npm run build   # 类型检查 + 生产构建（产出 dist/index.html，并抄成根目录的 index.html）
 ```
+
+入口与产物的分工（别搞反，否则构建会变成空跑）：
+
+- `src/index.html`：**源码入口**，里面引用 `/src/main.ts`，是 Vite 的入口模板。
+- `index.html`：**交付文件**（构建产物），双击即读；由 `npm run build` 自动覆盖更新。
+- `dist/index.html`：构建输出目录里的同一份产物（`dist/` 不入库）。
 
 ## 文档
 
@@ -40,14 +46,14 @@ samples/         手测用样例小说（demo.txt 与它的 GBK 版 demo-gbk.txt
 
 ## 交付
 
-`npm run build` → `dist/index.html`（约 123 KB，已内联全部 JS/CSS）。双击它就能读，
+`npm run build` → `dist/index.html` 与根目录 `index.html`（约 126 KB，已内联全部 JS/CSS）。双击根目录那份就能读，
 不联网、无安装步骤；产物若还引用外部文件，构建会直接失败。
 
 ## 用法
 
 - 打开：把 TXT 拖进窗口，或点「选择文件」；关掉再打开自动回到上次那本书与上次读到的段落
 - 连读：读到章末直接往下滚就进下一章，一根滚动条读完全书，不用点按钮
-- 目录：左上角「目录」（`d`），点击跳章，Esc 收起
+- 目录：左上角「目录」（`d`），点击跳章，Esc 收起；右边缘可以按住拖动改宽度（长章节名看得全）
 - 常用键：`d` 目录 · `w` 排版与设置 · `a` 加书签 · `b` 书签列表 · `r` 最近打开 · `t` 换主题 · `m` 沉浸模式；
   `←` / `→` 翻章，`空格` / `PageDown` 翻页，`PageUp` 回翻，`Home` / `End` 到本章首 / 末
 - 改键：排版面板 →「快捷键」，点「改」再按新键；撞上别人的键会被拒绝，随时能「恢复默认」
