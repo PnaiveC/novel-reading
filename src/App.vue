@@ -18,6 +18,7 @@ import {
 import { createLibrary, type BookSummary, type Library } from './core/library'
 import type { Encoding } from './core/encoding'
 import { FONT_STACKS } from './core/settings'
+import { anchorScrollTop, pageTurnTop } from './core/scroll'
 import type { ShortcutActionId } from './core/shortcuts'
 import {
   loadBookmarks,
@@ -64,7 +65,7 @@ const {
 
 const { settings, update: updateSettings, reset: resetSettings } = useSettings()
 const { bindings: shortcuts, setKey, reset: resetShortcuts, match, hint } = useShortcuts()
-const { prefs, toggleImmersive } = useUiPrefs()
+const { prefs, update: updatePrefs, toggleImmersive } = useUiPrefs()
 
 const scrollEl = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -134,6 +135,16 @@ let stopSystemTheme: () => void = () => {}
 let restoring = false
 let frame = 0
 
+/** 程序性滚动后按住两帧：等布局稳定，别把中间态当成用户位置 */
+function holdRestore(): void {
+  restoring = true
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      restoring = false
+    })
+  })
+}
+
 function paragraphBoxes(container: HTMLElement): ParagraphBox[] {
   const boxes: ParagraphBox[] = []
   container.querySelectorAll<HTMLElement>('[data-p]').forEach((node) => {
@@ -152,54 +163,61 @@ function sectionTop(container: HTMLElement, section: HTMLElement): number {
   return section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
 }
 
+/** 视口顶部第一个还看得见的元素（章节标题或段落）：拿它当锚点校正滚动 */
+function pickAnchor(container: HTMLElement): HTMLElement | null {
+  const top = container.getBoundingClientRect().top
+  const nodes = container.querySelectorAll<HTMLElement>('[data-chapter] > *')
+  for (const node of nodes) {
+    if (node.getBoundingClientRect().bottom > top) return node
+  }
+  return null
+}
+
+function anchorOffset(container: HTMLElement, node: HTMLElement): number {
+  return node.getBoundingClientRect().top - container.getBoundingClientRect().top
+}
+
 /**
  * C4：按当前章把渲染窗口补到两头——往后长保证滚到章末直接接上下一章，
- * 往前长保证往回滚不会撞到「窗口头」。两头补 / 裁都补偿滚动位置，正文不动。
+ * 往前长保证往回滚不会撞到「窗口头」。
  */
 async function ensureWindow(anchor: number): Promise<void> {
   const total = chapters.value.length
   if (!total) return
   const extended = extendedWindow(windowRange.value, anchor, total)
-  if (extended.start !== windowRange.value.start || extended.end !== windowRange.value.end) {
-    windowRange.value = extended
+  if (extended.end !== windowRange.value.end) {
+    windowRange.value = { ...windowRange.value, end: extended.end }
   }
   const backStart = grownWindowStart(windowRange.value, anchor, total)
-  if (backStart < windowRange.value.start) await growTop(backStart)
+  if (backStart < windowRange.value.start) await moveWindowStart(backStart)
   const trimStart = trimmedWindowStart(windowRange.value, anchor, total)
-  if (trimStart > windowRange.value.start) await trimTop(trimStart)
+  if (trimStart > windowRange.value.start) await moveWindowStart(trimStart)
 }
 
-/** 往窗口头上补章节：上面多了多少高度，就把 scrollTop 加回去，视线里的正文不动 */
-async function growTop(nextStart: number): Promise<void> {
+/**
+ * 在窗口头上补 / 裁章节。按锚点元素把视线钉回原处：
+ * 浏览器自己的 scroll anchoring 先动过手时不重复加，没动手时正好补齐。
+ */
+async function moveWindowStart(nextStart: number): Promise<void> {
   const container = scrollEl.value
-  if (nextStart >= windowRange.value.start) return
-  const before = container?.scrollHeight ?? 0
+  if (!container || nextStart === windowRange.value.start) return
+  const anchor = pickAnchor(container)
+  const offsetBefore = anchor ? anchorOffset(container, anchor) : 0
   windowRange.value = { ...windowRange.value, start: nextStart }
-  if (!container) return
   await nextTick()
-  restoring = true
-  container.scrollTop += Math.max(0, container.scrollHeight - before)
-  requestAnimationFrame(() => {
-    restoring = false
-  })
-}
-
-async function trimTop(nextStart: number): Promise<void> {
-  const container = scrollEl.value
-  const before = container?.scrollHeight ?? 0
-  const scrollTop = container?.scrollTop ?? 0
-  windowRange.value = { ...windowRange.value, start: nextStart }
-  if (!container) return
-  await nextTick()
-  restoring = true
-  container.scrollTop = Math.max(0, scrollTop - (before - container.scrollHeight))
-  requestAnimationFrame(() => {
-    restoring = false
-  })
+  if (anchor?.isConnected) {
+    container.scrollTop = anchorScrollTop(
+      container.scrollTop,
+      offsetBefore,
+      anchorOffset(container, anchor),
+    )
+  }
+  holdRestore()
 }
 
 function syncPosition(): void {
   const container = scrollEl.value
+  if (restoring) return
   if (!container || !container.clientHeight) return
   const position = visiblePosition(paragraphBoxes(container), container.getBoundingClientRect().top)
   if (!position) return
@@ -215,39 +233,49 @@ function onScroll(): void {
   })
 }
 
-/** 跳到某章 / 某个书签后，把锚点段落顶到视口顶部 */
+/**
+ * 跳到某章 / 某个书签后重新落位。
+ * 跳章（锚点是本章第一段）连章节标题一起顶到顶部，翻完能看见自己翻到哪一章了；
+ * 点书签则直接落到那一段。
+ */
 async function restoreScroll(): Promise<void> {
   await nextTick()
   const container = scrollEl.value
   if (!container) return
   const section = container.querySelector<HTMLElement>(`[data-chapter="${chapterIndex.value}"]`)
-  const node = section?.querySelectorAll<HTMLElement>('[data-p]')[anchorIndex.value]
-  restoring = true
+  const node =
+    anchorIndex.value > 0
+      ? section?.querySelectorAll<HTMLElement>('[data-p]')[anchorIndex.value]
+      : null
   container.scrollTop = node
     ? sectionTop(container, node)
     : section
       ? sectionTop(container, section)
       : 0
-  requestAnimationFrame(() => {
-    restoring = false
-  })
+  holdRestore()
 }
 
+/** PgDn / PgUp：一次一屏，到了头就不动（不越过底部、也不会一次翻多页） */
 function turnPage(direction: 1 | -1): void {
   const container = scrollEl.value
   if (!container) return
-  container.scrollTop += direction * Math.max(80, Math.round(container.clientHeight * 0.9))
+  container.scrollTop = pageTurnTop(
+    {
+      scrollTop: container.scrollTop,
+      clientHeight: container.clientHeight,
+      scrollHeight: container.scrollHeight,
+    },
+    direction,
+  )
+  syncPosition()
 }
 
 function scrollToChapterStart(): void {
   const container = scrollEl.value
   const section = container?.querySelector<HTMLElement>(`[data-chapter="${chapterIndex.value}"]`)
   if (!container || !section) return
-  restoring = true
   container.scrollTop = sectionTop(container, section)
-  requestAnimationFrame(() => {
-    restoring = false
-  })
+  holdRestore()
 }
 
 function scrollToChapterEnd(): void {
@@ -256,13 +284,11 @@ function scrollToChapterEnd(): void {
   const next = container.querySelector<HTMLElement>(`[data-chapter="${chapterIndex.value + 1}"]`)
   if (!next) {
     container.scrollTop = container.scrollHeight
+    holdRestore()
     return
   }
-  restoring = true
   container.scrollTop = Math.max(0, sectionTop(container, next) - 1)
-  requestAnimationFrame(() => {
-    restoring = false
-  })
+  holdRestore()
 }
 
 function flushPosition(): void {
@@ -305,6 +331,22 @@ function flash(message: string): void {
   }, 2400)
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error)
+}
+
+/** 目录宽度：拖动中只改本地状态，松手才落盘 */
+const tocWidth = ref(prefs.value.tocWidth)
+
+function dragToc(width: number): void {
+  tocWidth.value = width
+}
+
+function saveTocWidth(width: number): void {
+  tocWidth.value = width
+  updatePrefs({ tocWidth: width })
+}
+
 function openSheet(next: 'recent' | 'bookmarks' | 'shortcuts'): void {
   if (sheet.value === next) {
     sheet.value = null
@@ -342,7 +384,10 @@ async function dropBook(id: string): Promise<void> {
 
 function addBookmark(): void {
   const current = book.value
-  if (!current) return
+  if (!current) {
+    flash('还没有打开的书，书签没加成')
+    return
+  }
   const text = paragraphsOf(chapterIndex.value)[anchorIndex.value] ?? ''
   const bookmark = makeBookmark({
     chapterIndex: chapterIndex.value,
@@ -351,9 +396,17 @@ function addBookmark(): void {
     text,
     createdAt: Date.now(),
   })
-  bookmarks.value = upsertBookmark(bookmarks.value, bookmark)
-  saveBookmarks(current.id, bookmarks.value)
-  flash(`已加书签 · ${chapter.value?.title ?? ''}`)
+  const before = bookmarks.value
+  const exists = before.some((item) => item.id === bookmark.id)
+  const next = upsertBookmark(before, bookmark)
+  try {
+    saveBookmarks(current.id, next)
+  } catch (error) {
+    flash(`书签没存下（${messageOf(error)}），换个位置再试试`)
+    return
+  }
+  bookmarks.value = next
+  flash(exists ? '这条书签已经有了 · 已更新时间' : `已加书签 · ${chapter.value?.title ?? ''}`)
 }
 
 function pickBookmark(bookmark: Bookmark): void {
@@ -363,9 +416,18 @@ function pickBookmark(bookmark: Bookmark): void {
 
 function dropBookmark(id: string): void {
   const current = book.value
-  if (!current) return
-  bookmarks.value = removeBookmark(bookmarks.value, id)
-  saveBookmarks(current.id, bookmarks.value)
+  if (!current) {
+    flash('还没有打开的书，书签没删掉')
+    return
+  }
+  const next = removeBookmark(bookmarks.value, id)
+  try {
+    saveBookmarks(current.id, next)
+  } catch (error) {
+    flash(`书签没删掉（${messageOf(error)}）`)
+    return
+  }
+  bookmarks.value = next
   flash('已删掉这条书签')
 }
 
@@ -590,7 +652,10 @@ onBeforeUnmount(() => {
           :chapters="chapters"
           :current="chapterIndex"
           :book-name="book?.name"
+          :width="tocWidth"
           @pick="jumpTo($event, 0)"
+          @resize="dragToc"
+          @resize-end="saveTocWidth"
           @close="tocOpen = false"
         />
 
@@ -638,8 +703,7 @@ onBeforeUnmount(() => {
           <footer class="status" :class="{ hidden: !statusVisible }">
             <span class="pos">{{ chapterLabel }}</span>
             <span class="keys">{{ keysHint }}</span>
-            <span v-if="toast" class="toast">{{ toast }}</span>
-            <span v-else-if="notice" class="notice">⚠ {{ notice }}</span>
+            <span v-if="notice" class="notice">⚠ {{ notice }}</span>
           </footer>
         </div>
       </div>
@@ -691,7 +755,9 @@ onBeforeUnmount(() => {
     />
 
     <div v-if="dragging" class="veil"><span>松手即打开</span></div>
-  </div>
+    <!-- 提示浮在最上层：书签面板 / 沉浸模式下也看得见（操作必须有反馈） -->
+    <div v-if="toast" class="toast-float" role="status">{{ toast }}</div>
+   </div>
 </template>
 
 <style>
@@ -880,6 +946,9 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: auto;
+  /* 窗口补 / 裁章节时，界面自己按锚点元素校正滚动；
+     关掉浏览器自带的 scroll anchoring，免得两边各调一次把视线顶跑 */
+  overflow-anchor: none;
 }
 
 .page {
@@ -958,8 +1027,22 @@ button {
   color: var(--accent, #b06a2c);
 }
 
-.toast {
-  color: var(--accent, #b06a2c);
+/* 操作反馈：固定浮层，盖在目录 / 排版面板（z-index 40）与书签卡片之上 */
+.toast-float {
+  position: fixed;
+  left: 50%;
+  bottom: 64px;
+  z-index: 60;
+  transform: translateX(-50%);
+  max-width: min(560px, 86vw);
+  padding: 8px 16px;
+  border: 1px solid var(--border, #e3ddd0);
+  border-radius: 999px;
+  background: var(--bar, #fbf9f4);
+  color: var(--fg, #2c2a26);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  text-align: center;
 }
 
 .center {

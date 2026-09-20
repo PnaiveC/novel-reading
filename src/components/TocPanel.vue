@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import type { Chapter } from '../core/chapterParser'
+import { clampTocWidth } from '../core/uiPrefs'
 
 const props = defineProps<{
   chapters: readonly Chapter[]
   current: number
   bookName?: string
+  /** 目录栏宽度（像素） */
+  width: number
 }>()
 
-const emit = defineEmits<{ pick: [index: number]; close: [] }>()
+const emit = defineEmits<{
+  pick: [index: number]
+  close: []
+  resize: [width: number]
+  resizeEnd: [width: number]
+}>()
 
 const listEl = ref<HTMLElement | null>(null)
 
@@ -20,10 +28,31 @@ async function revealCurrent(): Promise<void> {
 }
 
 watch(() => props.current, () => void revealCurrent(), { immediate: true })
+
+/** 拖右边缘改宽度：拖动中实时跟手，松手才落盘（由界面负责存） */
+function startDrag(event: MouseEvent): void {
+  event.preventDefault()
+  const startX = event.clientX
+  const startWidth = props.width
+  let latest = clampTocWidth(startWidth)
+
+  const onMove = (move: MouseEvent): void => {
+    latest = clampTocWidth(startWidth + (move.clientX - startX))
+    emit('resize', latest)
+  }
+  const onUp = (): void => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    emit('resizeEnd', latest)
+  }
+
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
 </script>
 
 <template>
-  <aside class="toc">
+  <aside class="toc" :style="{ width: `${props.width}px` }">
     <header class="toc-head">
       <span class="toc-book" :title="props.bookName">{{ props.bookName || '目录' }}</span>
       <button class="toc-close" title="收起目录（Esc）" @click="emit('close')">×</button>
@@ -42,11 +71,19 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
       </li>
     </ol>
     <footer class="toc-foot">共 {{ props.chapters.length }} 章</footer>
+    <div
+      class="toc-resizer"
+      title="拖动调整目录宽度"
+      role="separator"
+      aria-orientation="vertical"
+      @mousedown="startDrag"
+    ></div>
   </aside>
 </template>
 
 <style scoped>
 .toc {
+  position: relative;
   flex: none;
   width: 260px;
   display: flex;
@@ -54,6 +91,20 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
   border-right: 1px solid var(--border, #e3ddd0);
   background: var(--panel, #f4f1e9);
   min-height: 0;
+}
+
+/* 目录右边缘：按住拖动改宽度 */
+.toc-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.toc-resizer:hover {
+  background: var(--border, #e3ddd0);
 }
 
 .toc-head {
@@ -140,9 +191,4 @@ watch(() => props.current, () => void revealCurrent(), { immediate: true })
   font-size: 12px;
 }
 
-@media (max-width: 720px) {
-  .toc {
-    width: 200px;
-  }
-}
 </style>

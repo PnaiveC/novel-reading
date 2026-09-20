@@ -101,6 +101,53 @@ describe('目录（B3）', () => {
     await pressKey('Escape')
     expect(wrapper.find('.toc').exists()).toBe(false)
   })
+
+  it('章内重抄的标题行不额外长章节，目录只列真实章节', async () => {
+    const wrapper = await mountApp(
+      [
+        ' 第53章 请神 ',
+        '    第53章 请神',
+        '正文一。',
+        '',
+        '第54章 桃叶见桃花',
+        '（一）小标题不算章节',
+        '一、也不算',
+        '正文二。',
+      ].join('\n'),
+    )
+    await buttonByText(wrapper, '目录').trigger('click')
+    const items = wrapper.findAll('.toc-item')
+    expect(items).toHaveLength(2)
+    expect(items[0].text()).toContain('第53章 请神')
+    expect(items[1].text()).toContain('第54章 桃叶见桃花')
+    expect(wrapper.find('.toc-foot').text()).toContain('共 2 章')
+  })
+
+  it('目录宽度可以用鼠标拖拽，松手后落盘', async () => {
+    const wrapper = await mountApp()
+    await buttonByText(wrapper, '目录').trigger('click')
+    const toc = wrapper.find('.toc')
+    expect((toc.element as HTMLElement).style.width).toBe('260px')
+
+    await toc.find('.toc-resizer').trigger('mousedown', { clientX: 300 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 420 }))
+    await flushPromises()
+    expect((toc.element as HTMLElement).style.width).toBe('380px')
+
+    // 拖动中不写盘，松手才写
+    expect(loadUiPrefs().tocWidth).toBe(260)
+    document.dispatchEvent(new MouseEvent('mouseup', { clientX: 420 }))
+    await flushPromises()
+    expect(loadUiPrefs().tocWidth).toBe(380)
+
+    // 拖过头收进合法区间
+    await toc.find('.toc-resizer').trigger('mousedown', { clientX: 300 })
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 5000 }))
+    document.dispatchEvent(new MouseEvent('mouseup', { clientX: 5000 }))
+    await flushPromises()
+    expect((toc.element as HTMLElement).style.width).toBe('560px')
+    expect(loadUiPrefs().tocWidth).toBe(560)
+  })
 })
 
 describe('导航（B5）', () => {
@@ -457,7 +504,7 @@ describe('最近打开列表（C5）', () => {
     expect(await library.listBooks()).toEqual([])
     expect(await library.getBook(idA)).toBeNull()
     expect(wrapper.find('.chapter-name').text()).toBe('第一章 初见')
-    expect(wrapper.find('.status').text()).toContain('已从本机删掉')
+    expect(wrapper.find('.toast-float').text()).toContain('已从本机删掉')
   })
 })
 
@@ -471,7 +518,7 @@ describe('书签（C7）', () => {
     expect(loadBookmarks(bookId)).toHaveLength(1)
     expect(loadBookmarks(bookId)[0]?.chapterTitle).toBe('第二章 重逢')
     expect(loadBookmarks(bookId)[0]?.excerpt).toBe('正文二。')
-    expect(wrapper.find('.status').text()).toContain('已加书签')
+    expect(wrapper.find('.toast-float').text()).toContain('已加书签')
 
     await pressKey('ArrowRight')
     expect(wrapper.find('.chapter-name').text()).toBe('第三章 远行')
@@ -496,5 +543,69 @@ describe('书签（C7）', () => {
     await pressKey('a')
     expect(loadBookmarks(bookId)).toHaveLength(1)
     expect(loadBookmarks('hash-other')).toEqual([])
+  })
+
+  it('书签面板里点「加书签」也有反馈：提示浮在面板之上，不在面板里面', async () => {
+    const wrapper = await mountApp()
+    const bookId = computeBookId(encoder.encode(TOC_NOVEL))
+    await pressKey('b')
+    expect(wrapper.find('.bookmarks').exists()).toBe(true)
+
+    await wrapper.find('.bookmarks .add').trigger('click')
+    const toast = wrapper.find('.toast-float')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('已加书签')
+    expect(toast.text()).toContain('第一章 初见')
+    // 提示是 app 这一层的浮层：书签卡片盖不住它
+    expect(wrapper.find('.bookmarks').element.contains(toast.element)).toBe(false)
+    expect(wrapper.findAll('.bookmarks .row')).toHaveLength(1)
+    expect(loadBookmarks(bookId)).toHaveLength(1)
+  })
+
+  it('同一个位置重复加书签：提示「已经有了」而不是没反应', async () => {
+    const wrapper = await mountApp()
+    await pressKey('a')
+    expect(wrapper.find('.toast-float').text()).toContain('已加书签')
+
+    await pressKey('a')
+    expect(wrapper.find('.toast-float').text()).toContain('已经有了')
+    expect(loadBookmarks(computeBookId(encoder.encode(TOC_NOVEL)))).toHaveLength(1)
+  })
+
+  it('书签存不下时给出失败提示，不动已有的书签列表', async () => {
+    const wrapper = await mountApp()
+    const bookId = computeBookId(encoder.encode(TOC_NOVEL))
+    await pressKey('a')
+    expect(loadBookmarks(bookId)).toHaveLength(1)
+
+    // 换一个「写书签就抛错」的 localStorage：模拟容量满 / 存储被禁
+    const real = window.localStorage
+    const broken = memoryStorage()
+    broken.setItem = (key, value) => {
+      if (key.includes('bookmarks')) throw new Error('存储空间不足')
+      real.setItem(key, value)
+    }
+    Object.defineProperty(window, 'localStorage', {
+      value: broken,
+      configurable: true,
+      writable: true,
+    })
+    try {
+      await pressKey('ArrowRight')
+      await pressKey('a')
+      expect(wrapper.find('.toast-float').text()).toContain('书签没存下')
+      expect(wrapper.find('.toast-float').text()).toContain('存储空间不足')
+
+      // 内存里的列表没被写坏：还是第一章那一条
+      await pressKey('b')
+      expect(wrapper.findAll('.bookmarks .row')).toHaveLength(1)
+      expect(wrapper.find('.bookmarks .row').text()).toContain('第一章 初见')
+    } finally {
+      Object.defineProperty(window, 'localStorage', {
+        value: real,
+        configurable: true,
+        writable: true,
+      })
+    }
   })
 })

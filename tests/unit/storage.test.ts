@@ -94,12 +94,15 @@ describe('storage', () => {
     expect(loadBookmarks('book-1')).toEqual([])
   })
 
-  it('界面偏好（沉浸模式）存得住', () => {
+  it('界面偏好（沉浸模式 / 目录宽度）存得住', () => {
     expect(loadUiPrefs().immersive).toBe(false)
-    saveUiPrefs({ immersive: true })
+    expect(loadUiPrefs().tocWidth).toBe(260)
+    saveUiPrefs({ immersive: true, tocWidth: 400 })
     expect(loadUiPrefs().immersive).toBe(true)
+    expect(loadUiPrefs().tocWidth).toBe(400)
     window.localStorage.setItem('novel-reading:ui', '{坏 JSON')
     expect(loadUiPrefs().immersive).toBe(false)
+    expect(loadUiPrefs().tocWidth).toBe(260)
   })
 
   it('fileKey 稳定且能区分不同文件', () => {

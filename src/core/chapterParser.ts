@@ -22,6 +22,15 @@ const HEADINGS: RegExp[] = [
   /^chapter\s*[0-9ivxlcdm]{1,8}(?:\s|$|:|：)/i,
 ]
 
+/**
+ * 章内小标题：序号 + 短标题，例如「（一）初入山门」「一、初入山门」「1. 初见」。
+ * 这些是章内的分节，不是新章（需求：目录里只出现真实章节）。
+ */
+const SUB_HEADINGS: RegExp[] = [
+  /^[（(【\[]\s*(?:[0-9０-９]{1,4}|[一二三四五六七八九十百千]{1,6})\s*[）)】\]]/,
+  /^(?:[0-9０-９]{1,4}|[一二三四五六七八九十百千]{1,6})\s*[、.．]/,
+]
+
 /** 标题行的长度与标点上界：挡住「第一章的内容是这样的……」这类正文误判 */
 const TITLE_MAX_LENGTH = 40
 const SENTENCE_END = /[。！？…！?]|[,，、；;：:]$/
@@ -29,8 +38,37 @@ const SENTENCE_END = /[。！？…！?]|[,，、；;：:]$/
 function isHeading(line: string): boolean {
   const trimmed = line.trim()
   if (!trimmed || trimmed.length > TITLE_MAX_LENGTH) return false
+  if (SUB_HEADINGS.some((pattern) => pattern.test(trimmed))) return false
   if (SENTENCE_END.test(trimmed)) return false
   return HEADINGS.some((pattern) => pattern.test(trimmed))
+}
+
+/** 比对标题时抹掉所有空白（含全角空格）：文件里同一条标题常有细微空格差别 */
+export function normalizeTitle(title: string): string {
+  return title.replace(/[\s\u3000]+/g, '')
+}
+
+/** 只有编号、没有副标题的标题，例如「第五百三十四章」「第七卷」 */
+function isBareNumberTitle(title: string): boolean {
+  return (
+    new RegExp(`^第[0-9０-９零一二三四五六七八九十百千万两]{1,12}[章节回卷部集篇]$`).test(title) ||
+    /^[0-9０-９]{1,4}$/.test(title)
+  )
+}
+
+/**
+ * 两行标题是不是同一章（正文里又抄了一遍标题行）。
+ * 同一条标题重复出现时不能再切一章，否则目录里会长出重复的、空白的章节。
+ */
+export function isSameChapterTitle(current: string, next: string): boolean {
+  const left = normalizeTitle(current)
+  const right = normalizeTitle(next)
+  if (!left || !right) return false
+  if (left === right) return true
+  const short = left.length <= right.length ? left : right
+  const long = left.length <= right.length ? right : left
+  // 「第五百三十四章」/「第五百三十四章 顾璨还是那个顾璨」——短的那条只有编号
+  return long.startsWith(short) && isBareNumberTitle(short)
 }
 
 function splitByHeading(lines: readonly string[]): Chapter[] {
@@ -40,6 +78,13 @@ function splitByHeading(lines: readonly string[]): Chapter[] {
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim()
     if (isHeading(lines[i])) {
+      // 正文开头重抄了一遍本章标题：并进当前章，标题取更完整的那条，这一行本身不进正文
+      if (current && isSameChapterTitle(current.title, trimmed)) {
+        if (normalizeTitle(trimmed).length > normalizeTitle(current.title).length) {
+          current.title = trimmed
+        }
+        continue
+      }
       if (current) chapters.push(current)
       current = { title: trimmed, content: '', startLine: i }
     } else if (current) {

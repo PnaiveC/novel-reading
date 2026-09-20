@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseChapters, SECTION_LENGTH } from '../../src/core/chapterParser'
+import {
+  isSameChapterTitle,
+  normalizeTitle,
+  parseChapters,
+  SECTION_LENGTH,
+} from '../../src/core/chapterParser'
 
 describe('parseChapters', () => {
   it('按“第X章”分割章节', () => {
@@ -70,5 +75,93 @@ describe('parseChapters', () => {
     const chapters = parseChapters('一段没有章节标记的文本。\n第二行。')
     expect(chapters).toHaveLength(1)
     expect(chapters[0].title).toBe('全文')
+  })
+})
+
+describe('parseChapters：章内重复标题行不算新章（目录只出现真实章节）', () => {
+  it('正文开头重抄一遍本章标题：合成一章，标题行不进正文', () => {
+    const text = [
+      '第十二章 初见',
+      '    第十二章 初见',
+      '正文一。',
+      '',
+      '第十三章 重逢',
+      '正文二。',
+    ].join('\n')
+    const chapters = parseChapters(text)
+    expect(chapters.map((c) => c.title)).toEqual(['第十二章 初见', '第十三章 重逢'])
+    expect(chapters[0].content).toContain('正文一。')
+    expect(chapters[0].content).not.toContain('第十二章')
+  })
+
+  it('标题写法有出入（多空格、只有编号）也算同一章', () => {
+    const text = [
+      ' 第53章 请神 ',
+      '',
+      '    第53章 请神',
+      '',
+      '正文一。',
+      '',
+      '第五百三十四章 顾璨还是那个顾璨',
+      '    第五百三十四章',
+      '正文二。',
+    ].join('\n')
+    const chapters = parseChapters(text)
+    expect(chapters.map((c) => c.title)).toEqual([
+      '第53章 请神',
+      '第五百三十四章 顾璨还是那个顾璨',
+    ])
+    expect(chapters[1].content).toBe('正文二。\n')
+  })
+
+  it('同一章里正文重复了一整块（抄袭式重复）也只算一章', () => {
+    const text = [
+      '第八百四十一章 新剑修',
+      '正文甲。',
+      '第八百四十一章 新剑修',
+      '正文甲。',
+      '第八百四十二章 后面',
+      '正文乙。',
+    ].join('\n')
+    expect(parseChapters(text).map((c) => c.title)).toEqual([
+      '第八百四十一章 新剑修',
+      '第八百四十二章 后面',
+    ])
+  })
+
+  it('不同章之间的同名标题照旧各算一章', () => {
+    const text = '第一章 起\n正文一。\n第二章 转\n正文二。\n第一章 起\n正文三。'
+    expect(parseChapters(text).map((c) => c.title)).toEqual([
+      '第一章 起',
+      '第二章 转',
+      '第一章 起',
+    ])
+  })
+
+  it('章内小标题不算章节，留在正文里', () => {
+    const text = [
+      '第十二章 初见',
+      '一、初入山门',
+      '（一）山门前的石阶',
+      '【二】山门里的规矩',
+      '1. 拜师',
+      '正文。',
+      '第十三章 下山',
+      '正文二。',
+    ].join('\n')
+    const chapters = parseChapters(text)
+    expect(chapters.map((c) => c.title)).toEqual(['第十二章 初见', '第十三章 下山'])
+    expect(chapters[0].content).toContain('一、初入山门')
+    expect(chapters[0].content).toContain('（一）山门前的石阶')
+    expect(chapters[0].content).toContain('1. 拜师')
+  })
+
+  it('isSameChapterTitle / normalizeTitle 的边界', () => {
+    expect(normalizeTitle(' 第五百三十四章　请神 ')).toBe('第五百三十四章请神')
+    expect(isSameChapterTitle('第53章 请神', ' 第53章 请神 ')).toBe(true)
+    expect(isSameChapterTitle('第五百三十四章 顾璨还是那个顾璨', '第五百三十四章')).toBe(true)
+    expect(isSameChapterTitle('第五百三十四章 顾璨还是那个顾璨', '第五百三十四章 请神')).toBe(false)
+    expect(isSameChapterTitle('第一章 起', '第三章 起')).toBe(false)
+    expect(isSameChapterTitle('', '')).toBe(false)
   })
 })

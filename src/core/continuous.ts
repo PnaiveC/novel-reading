@@ -12,12 +12,16 @@ export interface ChapterWindow {
 
 /** 当前章后面永远留一章垫着，滚到底就能接上 */
 export const WINDOW_AHEAD = 2
-/** 跳转时当前章前面留一章，往回滚不空 */
-export const WINDOW_BACK = 1
-/** 连续读下去时最多同时渲染多少章，超过就把上面老的裁掉 */
-export const WINDOW_MAX = 12
 /** 裁的时候当前章前面至少留几章 */
 export const WINDOW_KEEP_BACK = 3
+/**
+ * 跳转时当前章前面留几章。
+ * 和 WINDOW_KEEP_BACK 取同一个数：窗口一次摆到位，跳章后不必再往头上补，
+ * 「补头 + 校正滚动」那一步就不会推挤视线（翻章多翻一章的根因）。
+ */
+export const WINDOW_BACK = WINDOW_KEEP_BACK
+/** 连续读下去时最多同时渲染多少章，超过就把上面老的裁掉 */
+export const WINDOW_MAX = 12
 
 function clampIndex(index: number, total: number): number {
   if (total <= 0) return 0

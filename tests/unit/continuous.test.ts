@@ -11,8 +11,15 @@ import {
 describe('连续阅读窗口（C4）', () => {
   it('跳章时当前章前后各留一点，翻页不空', () => {
     expect(windowAround(0, 10)).toEqual({ start: 0, end: 2 })
-    expect(windowAround(5, 10)).toEqual({ start: 4, end: 7 })
-    expect(windowAround(9, 10)).toEqual({ start: 8, end: 9 })
+    // 前面留 3 章：跳章后窗口一次摆到位，不必再往头上补（补头会推挤视线）
+    expect(windowAround(5, 10)).toEqual({ start: 2, end: 7 })
+    expect(windowAround(9, 10)).toEqual({ start: 6, end: 9 })
+  })
+
+  it('跳章后紧接着 ensureWindow 不该再动窗口头', () => {
+    const window = windowAround(5, 30)
+    expect(grownWindowStart(window, 5, 30)).toBe(window.start)
+    expect(trimmedWindowStart(window, 5, 30)).toBe(window.start)
   })
 
   it('往后读只补后面，上面不动——滚动条因此不跳', () => {
