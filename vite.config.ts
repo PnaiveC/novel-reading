@@ -16,6 +16,9 @@ export default defineConfig({
   build: {
     target: 'es2022',
     cssCodeSplit: false,
+    // 别清空 dist/：那里面可能放着用户手测用的文本（需求文档、样本），
+    // 构建只覆盖自己产出的 index.html，不碰别的东西。
+    emptyOutDir: false,
     // 单文件产物：不拆 chunk、不加载外部模块，file:// 双击即可运行
     modulePreload: { polyfill: false },
     rollupOptions: {

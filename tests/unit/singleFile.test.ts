@@ -123,6 +123,12 @@ describe('构建入口', () => {
     expect(html).toContain('/src/main.ts')
     expect(html).not.toContain('@vue/shared')
   })
+
+  it('构建不清空 dist/：那里面可能放着用户手测用的文本，只覆盖自己产出的文件', () => {
+    // 用读配置文本的方式断言：在 jsdom 环境里 import vite 配置会撞上 TextEncoder 的 realm 问题
+    const config = readFileSync(join(process.cwd(), 'vite.config.ts'), 'utf8')
+    expect(config).toContain('emptyOutDir: false')
+  })
 })
 
 describe('构建产物', () => {
