@@ -14,6 +14,7 @@ import { nextTheme, resolveTheme, systemPrefersDark, watchSystemTheme } from './
 import { useReader } from './composables/useReader'
 import { useSettings } from './composables/useSettings'
 import { useShortcuts } from './composables/useShortcuts'
+import { useNotices } from './composables/useNotices'
 import { useUiPrefs } from './composables/useUiPrefs'
 import { createReadingViewport, type ChapterWindow, type ReadingViewport } from './reader/viewport'
 
@@ -21,10 +22,12 @@ const props = defineProps<{ library?: Library }>()
 
 const library = props.library ?? createLibrary()
 
+/** N4：「刚发生了什么」只有这一处记账——浮层绑 receipt，状态栏绑 notice */
+const { notice, receipt, flash, board: notices } = useNotices()
+
 const {
   status,
   errorMessage,
-  notice,
   book,
   chapters,
   chapter,
@@ -46,7 +49,7 @@ const {
   jumpTo,
   nextChapter,
   prevChapter,
-} = useReader({ library })
+} = useReader({ library, notices })
 
 const { settings, update: updateSettings, reset: resetSettings } = useSettings()
 const { bindings: shortcuts, setKey, reset: resetShortcuts, match, hint } = useShortcuts()
@@ -60,7 +63,6 @@ const settingsOpen = ref(false)
 const sheet = ref<'recent' | 'bookmarks' | 'shortcuts' | null>(null)
 const recentBooks = ref<BookSummary[]>([])
 const bookmarks = ref<Bookmark[]>([])
-const toast = ref('')
 const systemDark = ref(systemPrefersDark())
 const revealTop = ref(false)
 const revealBottom = ref(false)
@@ -73,7 +75,12 @@ const barVisible = computed(
   () => !immersive.value || revealTop.value || tocOpen.value || settingsOpen.value || sheet.value !== null,
 )
 const statusVisible = computed(
-  () => !immersive.value || revealBottom.value || sheet.value !== null || Boolean(toast.value),
+  () =>
+    !immersive.value ||
+    revealBottom.value ||
+    sheet.value !== null ||
+    Boolean(notice.value) ||
+    Boolean(receipt.value),
 )
 
 const renderedChapters = computed(() => {
@@ -175,16 +182,6 @@ watch(chapters, () => {
 })
 
 /* ------------------------------------------------------------------ 面板 */
-
-let toastTimer = 0
-
-function flash(message: string): void {
-  toast.value = message
-  if (toastTimer) window.clearTimeout(toastTimer)
-  toastTimer = window.setTimeout(() => {
-    toast.value = ''
-  }, 2400)
-}
 
 function messageOf(error: unknown): string {
   return error instanceof Error && error.message ? error.message : String(error)
@@ -292,10 +289,16 @@ function cycleTheme(): void {
   flash(next === 'auto' ? `主题：跟随系统（当前${label}）` : `主题：${label}`)
 }
 
-function applyShortcut(id: ShortcutActionId, key: string): { ok: boolean; message: string } {
+/** 改键的结果统一回一句：成了说「目录 → k」，没成说占着这个键的是谁 */
+function applyShortcut(id: ShortcutActionId, key: string): boolean {
   const result = setKey(id, key)
-  if (result.ok) flash(result.message)
-  return result
+  flash(result.message)
+  return result.ok
+}
+
+function resetShortcutKeys(): void {
+  resetShortcuts()
+  flash('已恢复默认键位')
 }
 
 /* ------------------------------------------------------------------ C2 沉浸模式 */
@@ -428,7 +431,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopSystemTheme()
   viewport?.destroy()
-  if (toastTimer) window.clearTimeout(toastTimer)
   window.removeEventListener('beforeunload', flushPosition)
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -604,13 +606,13 @@ onBeforeUnmount(() => {
       v-if="sheet === 'shortcuts'"
       :bindings="shortcuts"
       :apply="applyShortcut"
-      @reset="resetShortcuts"
+      @reset="resetShortcutKeys"
       @close="sheet = null"
     />
 
     <div v-if="dragging" class="veil"><span>松手即打开</span></div>
     <!-- 提示浮在最上层：书签面板 / 沉浸模式下也看得见（操作必须有反馈） -->
-    <div v-if="toast" class="toast-float" role="status">{{ toast }}</div>
+    <div v-if="receipt" class="toast-float" role="status">{{ receipt }}</div>
    </div>
 </template>
 

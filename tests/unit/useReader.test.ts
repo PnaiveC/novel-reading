@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
 import { useReader } from '../../src/composables/useReader'
 import { createLibrary, fileKey, type Library } from '../../src/core/library'
+import { createNoticeBoard } from '../../src/core/notice'
 import { clearStorage } from '../../src/core/storage'
 import { fileOf, memoryStorage } from '../helpers/fakes'
 
@@ -109,10 +110,14 @@ describe('useReader：记住上次这本书（A3）', () => {
         throw new Error('QuotaExceededError')
       },
     }
-    const reader = useReader({ library: createLibrary({ indexedDb: null, storage: full }) })
+    const notices = createNoticeBoard()
+    const reader = useReader({
+      library: createLibrary({ indexedDb: null, storage: full }),
+      notices,
+    })
     await reader.openFile(fileOf('big.txt', encoder.encode(NOVEL)))
     expect(reader.status.value).toBe('reading')
-    expect(reader.notice.value).toContain('没能存到本机')
+    expect(notices.state().notice).toContain('没能存到本机')
   })
 })
 
@@ -223,13 +228,14 @@ describe('useReader：编码识别与手动切换（B1）', () => {
   })
 
   it('解码出来满是替换字符时提示去手动换编码', async () => {
-    const reader = useReader({ library: newLibrary() })
+    const notices = createNoticeBoard()
+    const reader = useReader({ library: newLibrary(), notices })
     // 既不是合法 UTF-8、也不是合法 GBK 的字节
     const broken = new Uint8Array([0x81, 0x2f, 0x0a, 0x81, 0x2f, 0x0a, 0x80, 0x20])
     await reader.openFile(fileOf('broken.txt', broken))
     expect(reader.status.value).toBe('reading')
     expect(reader.encoding.value).toBe('gbk')
-    expect(reader.notice.value).toContain('乱码')
+    expect(notices.state().notice).toContain('乱码')
   })
 })
 

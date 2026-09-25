@@ -386,20 +386,70 @@ describe('快捷键（C3）', () => {
     await tocRow.find('.set').trigger('click')
     await pressKeyOnBody('k')
     expect(loadShortcuts().toc).toEqual(['k'])
-    expect(wrapper.find('.shortcuts .message').text()).toContain('目录')
+    // 结果统一走浮层回执（N4）：面板不再自建第五条通道
+    expect(wrapper.find('.toast-float').text()).toContain('目录')
 
     // w 是「排版与设置」的键，改键撞上要被拒绝
     await tocRow.find('.set').trigger('click')
     await pressKeyOnBody('w')
     expect(loadShortcuts().toc).toEqual(['k'])
-    expect(wrapper.find('.shortcuts .message').text()).toContain('排版与设置')
+    expect(wrapper.find('.toast-float').text()).toContain('排版与设置')
 
     await wrapper.findAll('.shortcuts button').find((item) => item.text() === '恢复默认')!.trigger('click')
+    await flushPromises()
     expect(loadShortcuts().toc).toEqual(['d'])
+    expect(wrapper.find('.toast-float').text()).toContain('已恢复默认键位')
 
     await pressKey('Escape')
     await pressKey('d')
     expect(wrapper.find('.toc').exists()).toBe(true)
+  })
+})
+
+describe('「刚发生了什么」（N4）', () => {
+  it('状况在状态栏、回执在浮层，谁也不顶掉谁', async () => {
+    // 一本书：读得到、写不进去（配额满）
+    const base = memoryStorage()
+    let blockWrites = false
+    const flaky: Storage = {
+      ...base,
+      get length() {
+        return base.length
+      },
+      key: (index) => base.key(index),
+      setItem: (key, value) => {
+        if (blockWrites) throw new Error('存储空间不足')
+        base.setItem(key, value)
+      },
+    }
+    const library = createLibrary({ indexedDb: null, storage: flaky })
+    const bytes = encoder.encode(TOC_NOVEL)
+    const stored: StoredBook = {
+      id: computeBookId(bytes),
+      name: '长篇.txt',
+      size: bytes.length,
+      encoding: 'utf-8',
+      text: TOC_NOVEL,
+      bytes,
+      addedAt: 1,
+      lastOpenedAt: 2,
+    }
+    await library.saveBook(stored)
+    await library.setLastBook(stored.id)
+    blockWrites = true
+
+    const wrapper = mount(App, { props: { library } })
+    await flushPromises()
+
+    // 状况：这本书没能存到本机，停在状态栏
+    expect(wrapper.find('.status .notice').text()).toContain('没能存到本机')
+
+    // 回执：换主题，浮在最上层（书签面板 / 沉浸模式也盖不住）
+    await pressKey('t')
+    expect(wrapper.find('.toast-float').text()).toContain('主题')
+
+    // 两格同时在：回执没把状况顶掉——以前靠两处 if (!notice.value) 手工维持的正是这件事
+    expect(wrapper.find('.status .notice').text()).toContain('没能存到本机')
   })
 })
 

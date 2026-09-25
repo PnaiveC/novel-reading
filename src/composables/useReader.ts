@@ -8,6 +8,7 @@ import {
   type ReadingProgress,
   type StoredBook,
 } from '../core/library'
+import { createNoticeBoard, type NoticeBoard } from '../core/notice'
 import { splitParagraphs } from '../core/paragraphs'
 import { computeBookSpan, percentAt, positionLabel } from '../core/position'
 
@@ -23,11 +24,19 @@ export interface OpenableFile {
 export interface UseReaderOptions {
   library?: Library
   now?: () => number
+  /** 「刚发生了什么」的记账处（N4）：状况报给它，别自己开一条通道 */
+  notices?: NoticeBoard
 }
 
 function messageOf(error: unknown): string {
   if (error instanceof Error && error.message) return error.message
   return String(error)
+}
+
+/** 状况可能同时成立（比如存不下 + 看着像乱码）：一起说，别互相顶掉 */
+function conditions(...texts: readonly (string | null)[]): string | null {
+  const parts = texts.filter((text): text is string => Boolean(text))
+  return parts.length ? parts.join(' ') : null
 }
 
 /**
@@ -37,10 +46,10 @@ function messageOf(error: unknown): string {
 export function useReader(options: UseReaderOptions = {}) {
   const library = options.library ?? createLibrary()
   const now = options.now ?? (() => Date.now())
+  const notices = options.notices ?? createNoticeBoard()
 
   const status = ref<ReaderStatus>('empty')
   const errorMessage = ref('')
-  const notice = ref('')
   const book = ref<LoadedBook | null>(null)
   const chapterIndex = ref(0)
   /** 当前章节的段落锚点（A4）：恢复用，也随滚动更新（B6 的全书百分比要看它） */
@@ -100,8 +109,8 @@ export function useReader(options: UseReaderOptions = {}) {
     return library.migrateLegacyProgress({ id: loaded.id, name: loaded.name, size: loaded.size })
   }
 
-  /** 把这本书存到本机（A3）；存不下不致命，本次照读，只提示下次要重选 */
-  async function remember(loaded: LoadedBook): Promise<void> {
+  /** 把这本书存到本机（A3）；存不下不致命，本次照读——返回该说的话，交给记账处 */
+  async function remember(loaded: LoadedBook): Promise<string | null> {
     const previous = stored
     try {
       const stamp = now()
@@ -119,10 +128,10 @@ export function useReader(options: UseReaderOptions = {}) {
       await library.saveBook(record)
       await library.setLastBook(loaded.id)
       stored = record
-      notice.value = ''
+      return null
     } catch (error) {
       const reason = error instanceof StorageFullError ? error.message : messageOf(error)
-      notice.value = `本书没能存到本机（${reason}），这次照常读，下次打开需要重新选文件。`
+      return `本书没能存到本机（${reason}），这次照常读，下次打开需要重新选文件。`
     }
   }
 
@@ -140,10 +149,13 @@ export function useReader(options: UseReaderOptions = {}) {
       stored = previous
       show(loaded, await progressOf(loaded))
       anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
-      await remember(loaded)
-      if (!notice.value && looksGarbled(loaded.text)) {
-        notice.value = '正文看着像乱码，去「排版」里手动换个编码试试。'
-      }
+      const failure = await remember(loaded)
+      notices.setNotice(
+        conditions(
+          failure,
+          looksGarbled(loaded.text) ? '正文看着像乱码，去「排版」里手动换个编码试试。' : null,
+        ),
+      )
     } catch (error) {
       errorMessage.value = messageOf(error)
       status.value = 'error'
@@ -161,7 +173,7 @@ export function useReader(options: UseReaderOptions = {}) {
     show(loaded, await progressOf(loaded))
     anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
     // 重开这本书，视作一次打开，让「最近」顺序保持正确
-    await remember(loaded)
+    notices.setNotice(await remember(loaded))
   }
 
   /** 启动时自动回到上次那本书（A3） */
@@ -208,10 +220,10 @@ export function useReader(options: UseReaderOptions = {}) {
     const loaded = loadBookFromBytes(current.name, bytes, next)
     encodingLocked.value = true
     show(loaded, { ...memory, updatedAt: now() })
-    await remember(loaded)
-    if (!notice.value) {
-      notice.value = looksGarbled(loaded.text) ? '这个编码下还是乱码，再换一个试试。' : ''
-    }
+    const failure = await remember(loaded)
+    notices.setNotice(
+      conditions(failure, looksGarbled(loaded.text) ? '这个编码下还是乱码，再换一个试试。' : null),
+    )
   }
 
   /** A4：记住当前章节与段落锚点 */
@@ -282,7 +294,6 @@ export function useReader(options: UseReaderOptions = {}) {
   return {
     status,
     errorMessage,
-    notice,
     book,
     chapters,
     chapter,
@@ -313,9 +324,6 @@ export function useReader(options: UseReaderOptions = {}) {
     },
     prevChapter: () => {
       if (chapterIndex.value > 0) jumpTo(chapterIndex.value - 1, 0)
-    },
-    clearNotice: () => {
-      notice.value = ''
     },
   }
 }

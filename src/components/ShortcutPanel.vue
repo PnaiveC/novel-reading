@@ -4,13 +4,13 @@ import { SHORTCUT_ACTIONS, keysLabel, type ShortcutActionId, type ShortcutBindin
 
 const props = defineProps<{
   bindings: ShortcutBindings
-  apply: (id: ShortcutActionId, key: string) => { ok: boolean; message: string }
+  /** 改键：成了返回 true；不管成没成，该说的话由 App 统一回给用户（N4） */
+  apply: (id: ShortcutActionId, key: string) => boolean
 }>()
 
 const emit = defineEmits<{ reset: []; close: [] }>()
 
 const recording = ref<ShortcutActionId | null>(null)
-const message = ref('')
 
 const groups = computed(() => [
   { title: '翻页与跳转', actions: SHORTCUT_ACTIONS.filter((action) => action.group === 'nav') },
@@ -23,7 +23,6 @@ function keysOf(id: ShortcutActionId): string {
 
 function startRecording(id: ShortcutActionId): void {
   recording.value = id
-  message.value = '按下想用的键（Esc 取消）'
 }
 
 /** 录制时抢在窗口处理器前面把键吃掉，免得改键顺手把目录也翻出来 */
@@ -34,18 +33,14 @@ function onKeydown(event: KeyboardEvent): void {
   event.stopPropagation()
   if (event.key === 'Escape') {
     recording.value = null
-    message.value = '已取消'
     return
   }
-  const result = props.apply(target, event.key)
-  message.value = result.message
-  if (result.ok) recording.value = null
+  if (props.apply(target, event.key)) recording.value = null
 }
 
 function resetAll(): void {
   emit('reset')
   recording.value = null
-  message.value = '已恢复默认键位'
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown, true))
@@ -86,7 +81,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
       </div>
 
       <footer class="foot">
-        <span class="message">{{ message }}</span>
+        <span class="hint">{{ recording ? '按下想用的键（Esc 取消）' : '' }}</span>
         <button class="reset" @click="resetAll">恢复默认</button>
         <button class="done" @click="emit('close')">收起</button>
       </footer>
@@ -229,13 +224,13 @@ kbd {
   border-top: 1px solid var(--border, #e3ddd0);
 }
 
-.message {
+.hint {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--accent, #b06a2c);
+  color: var(--muted, #9a9384);
   font-size: 12px;
 }
 
