@@ -6,19 +6,9 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import ShortcutPanel from './components/ShortcutPanel.vue'
 import TocPanel from './components/TocPanel.vue'
 import { makeBookmark, removeBookmark, upsertBookmark, type Bookmark } from './core/bookmarks'
-import {
-  extendedWindow,
-  grownWindowStart,
-  trimmedWindowStart,
-  visiblePosition,
-  windowAround,
-  type ChapterWindow,
-  type ParagraphBox,
-} from './core/continuous'
 import { createLibrary, type BookSummary, type Library } from './core/library'
 import type { Encoding } from './core/encoding'
 import { FONT_STACKS } from './core/settings'
-import { anchorScrollTop, pageTurnTop } from './core/scroll'
 import type { ShortcutActionId } from './core/shortcuts'
 import {
   loadBookmarks,
@@ -31,6 +21,7 @@ import { useReader } from './composables/useReader'
 import { useSettings } from './composables/useSettings'
 import { useShortcuts } from './composables/useShortcuts'
 import { useUiPrefs } from './composables/useUiPrefs'
+import { createReadingViewport, type ChapterWindow, type ReadingViewport } from './reader/viewport'
 
 const props = defineProps<{ library?: Library }>()
 
@@ -80,7 +71,7 @@ const systemDark = ref(systemPrefersDark())
 const revealTop = ref(false)
 const revealBottom = ref(false)
 
-/** C4：连着渲染的章节窗口，滚到哪儿补到哪儿 */
+/** C4：连着渲染的章节窗口（阅读视口通知过来，这里只是镜像给模板用） */
 const windowRange = ref<ChapterWindow>({ start: 0, end: 0 })
 
 const immersive = computed(() => prefs.value.immersive)
@@ -131,168 +122,41 @@ let stopSystemTheme: () => void = () => {}
 
 /* ------------------------------------------------------------------ 位置与连读 */
 
-/** 恢复滚动 / 裁窗口补偿期间不要把中间态当成用户位置写进进度 */
-let restoring = false
-let frame = 0
+/**
+ * N1：阅读视口。测量、章节窗口、滚动补偿、位置反推都在 module 里，
+ * 这一层只接线——它的两个出口接回 useReader（位置落盘）与模板（渲染哪几章）。
+ */
+let viewport: ReadingViewport | null = null
 
-/** 程序性滚动后按住两帧：等布局稳定，别把中间态当成用户位置 */
-function holdRestore(): void {
-  restoring = true
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      restoring = false
+watch(
+  scrollEl,
+  (el, _previous, onCleanup) => {
+    if (!el) return
+    const instance = createReadingViewport({
+      container: el,
+      chapterCount: () => chapters.value.length,
+      afterRender: () => nextTick(),
     })
-  })
-}
-
-function paragraphBoxes(container: HTMLElement): ParagraphBox[] {
-  const boxes: ParagraphBox[] = []
-  container.querySelectorAll<HTMLElement>('[data-p]').forEach((node) => {
-    const section = node.closest<HTMLElement>('[data-chapter]')
-    if (!section) return
-    boxes.push({
-      chapterIndex: Number(section.dataset.chapter ?? 0),
-      paragraphIndex: Number(node.dataset.p ?? 0),
-      bottom: node.getBoundingClientRect().bottom,
+    viewport = instance
+    const stopWindow = instance.onWindowChange((next) => {
+      windowRange.value = next
     })
-  })
-  return boxes
-}
-
-function sectionTop(container: HTMLElement, section: HTMLElement): number {
-  return section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
-}
-
-/** 视口顶部第一个还看得见的元素（章节标题或段落）：拿它当锚点校正滚动 */
-function pickAnchor(container: HTMLElement): HTMLElement | null {
-  const top = container.getBoundingClientRect().top
-  const nodes = container.querySelectorAll<HTMLElement>('[data-chapter] > *')
-  for (const node of nodes) {
-    if (node.getBoundingClientRect().bottom > top) return node
-  }
-  return null
-}
-
-function anchorOffset(container: HTMLElement, node: HTMLElement): number {
-  return node.getBoundingClientRect().top - container.getBoundingClientRect().top
-}
-
-/**
- * C4：按当前章把渲染窗口补到两头——往后长保证滚到章末直接接上下一章，
- * 往前长保证往回滚不会撞到「窗口头」。
- */
-async function ensureWindow(anchor: number): Promise<void> {
-  const total = chapters.value.length
-  if (!total) return
-  const extended = extendedWindow(windowRange.value, anchor, total)
-  if (extended.end !== windowRange.value.end) {
-    windowRange.value = { ...windowRange.value, end: extended.end }
-  }
-  const backStart = grownWindowStart(windowRange.value, anchor, total)
-  if (backStart < windowRange.value.start) await moveWindowStart(backStart)
-  const trimStart = trimmedWindowStart(windowRange.value, anchor, total)
-  if (trimStart > windowRange.value.start) await moveWindowStart(trimStart)
-}
-
-/**
- * 在窗口头上补 / 裁章节。按锚点元素把视线钉回原处：
- * 浏览器自己的 scroll anchoring 先动过手时不重复加，没动手时正好补齐。
- */
-async function moveWindowStart(nextStart: number): Promise<void> {
-  const container = scrollEl.value
-  if (!container || nextStart === windowRange.value.start) return
-  const anchor = pickAnchor(container)
-  const offsetBefore = anchor ? anchorOffset(container, anchor) : 0
-  windowRange.value = { ...windowRange.value, start: nextStart }
-  await nextTick()
-  if (anchor?.isConnected) {
-    container.scrollTop = anchorScrollTop(
-      container.scrollTop,
-      offsetBefore,
-      anchorOffset(container, anchor),
-    )
-  }
-  holdRestore()
-}
-
-function syncPosition(): void {
-  const container = scrollEl.value
-  if (restoring) return
-  if (!container || !container.clientHeight) return
-  const position = visiblePosition(paragraphBoxes(container), container.getBoundingClientRect().top)
-  if (!position) return
-  setPosition(position.chapterIndex, position.paragraphIndex)
-  void ensureWindow(position.chapterIndex)
-}
-
-function onScroll(): void {
-  if (restoring || frame) return
-  frame = requestAnimationFrame(() => {
-    frame = 0
-    syncPosition()
-  })
-}
-
-/**
- * 跳到某章 / 某个书签后重新落位。
- * 跳章（锚点是本章第一段）连章节标题一起顶到顶部，翻完能看见自己翻到哪一章了；
- * 点书签则直接落到那一段。
- */
-async function restoreScroll(): Promise<void> {
-  await nextTick()
-  const container = scrollEl.value
-  if (!container) return
-  const section = container.querySelector<HTMLElement>(`[data-chapter="${chapterIndex.value}"]`)
-  const node =
-    anchorIndex.value > 0
-      ? section?.querySelectorAll<HTMLElement>('[data-p]')[anchorIndex.value]
-      : null
-  container.scrollTop = node
-    ? sectionTop(container, node)
-    : section
-      ? sectionTop(container, section)
-      : 0
-  holdRestore()
-}
-
-/** PgDn / PgUp：一次一屏，到了头就不动（不越过底部、也不会一次翻多页） */
-function turnPage(direction: 1 | -1): void {
-  const container = scrollEl.value
-  if (!container) return
-  container.scrollTop = pageTurnTop(
-    {
-      scrollTop: container.scrollTop,
-      clientHeight: container.clientHeight,
-      scrollHeight: container.scrollHeight,
-    },
-    direction,
-  )
-  syncPosition()
-}
-
-function scrollToChapterStart(): void {
-  const container = scrollEl.value
-  const section = container?.querySelector<HTMLElement>(`[data-chapter="${chapterIndex.value}"]`)
-  if (!container || !section) return
-  container.scrollTop = sectionTop(container, section)
-  holdRestore()
-}
-
-function scrollToChapterEnd(): void {
-  const container = scrollEl.value
-  if (!container) return
-  const next = container.querySelector<HTMLElement>(`[data-chapter="${chapterIndex.value + 1}"]`)
-  if (!next) {
-    container.scrollTop = container.scrollHeight
-    holdRestore()
-    return
-  }
-  container.scrollTop = Math.max(0, sectionTop(container, next) - 1)
-  holdRestore()
-}
+    const stopPosition = instance.onPosition((position) => {
+      setPosition(position.chapterIndex, position.paragraphIndex)
+    })
+    void instance.jumpTo(chapterIndex.value, anchorIndex.value)
+    onCleanup(() => {
+      stopWindow()
+      stopPosition()
+      instance.destroy()
+      if (viewport === instance) viewport = null
+    })
+  },
+  { flush: 'post' },
+)
 
 function flushPosition(): void {
-  syncPosition()
+  viewport?.syncPosition()
 }
 
 function onVisibilityChange(): void {
@@ -301,9 +165,7 @@ function onVisibilityChange(): void {
 
 watch([() => book.value?.id, revision], async () => {
   if (status.value !== 'reading') return
-  windowRange.value = windowAround(chapterIndex.value, chapters.value.length)
-  await restoreScroll()
-  await ensureWindow(chapterIndex.value)
+  await viewport?.jumpTo(chapterIndex.value, anchorIndex.value)
 })
 
 watch(
@@ -316,7 +178,6 @@ watch(
 watch(chapters, () => {
   const last = Math.max(0, chapters.value.length - 1)
   if (chapterIndex.value > last) chapterIndex.value = last
-  if (windowRange.value.end > last) windowRange.value = { ...windowRange.value, end: last }
 })
 
 /* ------------------------------------------------------------------ 面板 */
@@ -479,16 +340,16 @@ function runAction(id: ShortcutActionId): void {
       nextChapter()
       break
     case 'pageDown':
-      turnPage(1)
+      viewport?.turnPage(1)
       break
     case 'pageUp':
-      turnPage(-1)
+      viewport?.turnPage(-1)
       break
     case 'chapterStart':
-      scrollToChapterStart()
+      viewport?.chapterStart()
       break
     case 'chapterEnd':
-      scrollToChapterEnd()
+      viewport?.chapterEnd()
       break
     case 'toc':
       tocOpen.value = !tocOpen.value
@@ -573,7 +434,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopSystemTheme()
-  if (frame) cancelAnimationFrame(frame)
+  viewport?.destroy()
   if (toastTimer) window.clearTimeout(toastTimer)
   window.removeEventListener('beforeunload', flushPosition)
   window.removeEventListener('keydown', onKeydown)
@@ -675,7 +536,7 @@ onBeforeUnmount(() => {
             @close="settingsOpen = false"
           />
 
-          <main ref="scrollEl" class="reader" @scroll.passive="onScroll">
+          <main ref="scrollEl" class="reader">
             <article class="page">
               <section
                 v-for="index in renderedChapters"
@@ -946,8 +807,8 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: auto;
-  /* 窗口补 / 裁章节时，界面自己按锚点元素校正滚动；
-     关掉浏览器自带的 scroll anchoring，免得两边各调一次把视线顶跑 */
+  /* 窗口补 / 裁章节时，阅读视口自己按锚点元素校正滚动；
+     这里关掉浏览器自带的 scroll anchoring 管首屏，视口里还会再设一次，两边不抢 */
   overflow-anchor: none;
 }
 
