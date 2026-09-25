@@ -113,14 +113,15 @@ export function singleFilePlugin(): Plugin {
       const refs = findExternalRefs(html)
       if (refs.length) throw new Error(`[single-file] 产物仍引用外部文件：${refs.join(', ')}`)
       // 盖一个源码指纹：交付文件是不是这份源码构建的，测试一比就知道
-      htmlFile.source = stampHtml(html, sourceStamp(root))
+      const stamped = stampHtml(html, sourceStamp(root))
+      htmlFile.source = stamped
       // 入口在 src/ 下，产物名字对齐成 dist/index.html
       if (htmlFile.fileName !== DELIVERY_FILE) {
         delete bundle[htmlFile.fileName]
         htmlFile.fileName = DELIVERY_FILE
         bundle[DELIVERY_FILE] = htmlFile
       }
-      this.warn(`[single-file] 已内联 ${assets.length} 个资源，产物 ${html.length} 字符`)
+      this.warn(`[single-file] 已内联 ${assets.length} 个资源，产物 ${stamped.length} 字符`)
     },
   }
 }
