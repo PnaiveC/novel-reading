@@ -10,12 +10,6 @@ import { createLibrary, type BookSummary, type Library } from './core/library'
 import type { Encoding } from './core/encoding'
 import { FONT_STACKS } from './core/settings'
 import type { ShortcutActionId } from './core/shortcuts'
-import {
-  loadBookmarks,
-  removeBookmarks,
-  removeProgress,
-  saveBookmarks,
-} from './core/storage'
 import { nextTheme, resolveTheme, systemPrefersDark, watchSystemTheme } from './core/theme'
 import { useReader } from './composables/useReader'
 import { useSettings } from './composables/useSettings'
@@ -170,8 +164,8 @@ watch([() => book.value?.id, revision], async () => {
 
 watch(
   () => book.value?.id,
-  (id) => {
-    bookmarks.value = id ? loadBookmarks(id) : []
+  async (id) => {
+    bookmarks.value = id ? await library.loadBookmarks(id) : []
   },
 )
 
@@ -233,9 +227,8 @@ async function openRecentBook(id: string): Promise<void> {
 async function dropBook(id: string): Promise<void> {
   const current = book.value?.id === id
   try {
+    // 一次删掉这本书的全部足迹：正文 / 索引 / 进度 / 书签 / 上次打开指针
     await library.removeBook(id)
-    removeProgress(id)
-    removeBookmarks(id)
     await refreshRecent()
     flash(current ? '已从本机删掉这本，本次阅读不受影响，下次打开要重新选文件' : '已从本机删掉这本')
   } catch (error) {
@@ -243,7 +236,7 @@ async function dropBook(id: string): Promise<void> {
   }
 }
 
-function addBookmark(): void {
+async function addBookmark(): Promise<void> {
   const current = book.value
   if (!current) {
     flash('还没有打开的书，书签没加成')
@@ -261,7 +254,7 @@ function addBookmark(): void {
   const exists = before.some((item) => item.id === bookmark.id)
   const next = upsertBookmark(before, bookmark)
   try {
-    saveBookmarks(current.id, next)
+    await library.saveBookmarks(current.id, next)
   } catch (error) {
     flash(`书签没存下（${messageOf(error)}），换个位置再试试`)
     return
@@ -275,7 +268,7 @@ function pickBookmark(bookmark: Bookmark): void {
   jumpTo(bookmark.chapterIndex, bookmark.paragraphIndex)
 }
 
-function dropBookmark(id: string): void {
+async function dropBookmark(id: string): Promise<void> {
   const current = book.value
   if (!current) {
     flash('还没有打开的书，书签没删掉')
@@ -283,7 +276,7 @@ function dropBookmark(id: string): void {
   }
   const next = removeBookmark(bookmarks.value, id)
   try {
-    saveBookmarks(current.id, next)
+    await library.saveBookmarks(current.id, next)
   } catch (error) {
     flash(`书签没删掉（${messageOf(error)}）`)
     return

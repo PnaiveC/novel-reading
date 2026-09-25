@@ -2,15 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import App from '../../src/App.vue'
 import { computeBookId } from '../../src/core/book'
-import { createLibrary, type StoredBook } from '../../src/core/library'
-import {
-  clearStorage,
-  loadBookmarks,
-  loadProgress,
-  loadSettings,
-  loadShortcuts,
-  loadUiPrefs,
-} from '../../src/core/storage'
+import { createLibrary, type Library, type StoredBook } from '../../src/core/library'
+import { clearStorage, loadSettings, loadShortcuts, loadUiPrefs } from '../../src/core/storage'
 import { memoryStorage } from '../helpers/fakes'
 
 const encoder = new TextEncoder()
@@ -32,6 +25,13 @@ const TOC_NOVEL = [
   '正文五。',
 ].join('\n')
 
+/** 每个测试一套自己的本机存储；断言用同一个后端的另一个书库实例 */
+let store: Storage = memoryStorage()
+
+function readerLibrary(): Library {
+  return createLibrary({ indexedDb: null, storage: store })
+}
+
 async function mountApp(text = TOC_NOVEL): Promise<VueWrapper> {
   const bytes = encoder.encode(text)
   const stored: StoredBook = {
@@ -44,7 +44,7 @@ async function mountApp(text = TOC_NOVEL): Promise<VueWrapper> {
     addedAt: 1,
     lastOpenedAt: 2,
   }
-  const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+  const library = readerLibrary()
   await library.saveBook(stored)
   await library.setLastBook(stored.id)
   const wrapper = mount(App, { props: { library } })
@@ -75,6 +75,7 @@ async function pressKeyOnBody(key: string): Promise<void> {
 
 beforeEach(() => {
   clearStorage()
+  store = memoryStorage()
 })
 
 describe('目录（B3）', () => {
@@ -258,7 +259,7 @@ describe('编码切换接进界面（B1）', () => {
     await flushPromises()
 
     expect(wrapper.find('.para').text()).not.toBe('正文二。')
-    expect(loadProgress(bookId)?.chapterIndex).toBe(1)
+    expect((await readerLibrary().loadProgress(bookId))?.chapterIndex).toBe(1)
 
     // 换回正确编码：回到第二章，位置没丢（B1 的验收点）
     ;(encodingSelect.element as HTMLSelectElement).value = 'utf-8'
@@ -515,9 +516,10 @@ describe('书签（C7）', () => {
 
     await pressKey('ArrowRight')
     await pressKey('a')
-    expect(loadBookmarks(bookId)).toHaveLength(1)
-    expect(loadBookmarks(bookId)[0]?.chapterTitle).toBe('第二章 重逢')
-    expect(loadBookmarks(bookId)[0]?.excerpt).toBe('正文二。')
+    const saved = await readerLibrary().loadBookmarks(bookId)
+    expect(saved).toHaveLength(1)
+    expect(saved[0]?.chapterTitle).toBe('第二章 重逢')
+    expect(saved[0]?.excerpt).toBe('正文二。')
     expect(wrapper.find('.toast-float').text()).toContain('已加书签')
 
     await pressKey('ArrowRight')
@@ -533,7 +535,8 @@ describe('书签（C7）', () => {
 
     await pressKey('b')
     await wrapper.find('.bookmarks .row .del').trigger('click')
-    expect(loadBookmarks(bookId)).toEqual([])
+    await flushPromises()
+    expect(await readerLibrary().loadBookmarks(bookId)).toEqual([])
     expect(wrapper.find('.bookmarks .empty').text()).toContain('还没有书签')
   })
 
@@ -541,8 +544,8 @@ describe('书签（C7）', () => {
     await mountApp()
     const bookId = computeBookId(encoder.encode(TOC_NOVEL))
     await pressKey('a')
-    expect(loadBookmarks(bookId)).toHaveLength(1)
-    expect(loadBookmarks('hash-other')).toEqual([])
+    expect(await readerLibrary().loadBookmarks(bookId)).toHaveLength(1)
+    expect(await readerLibrary().loadBookmarks('hash-other')).toEqual([])
   })
 
   it('书签面板里点「加书签」也有反馈：提示浮在面板之上，不在面板里面', async () => {
@@ -552,6 +555,7 @@ describe('书签（C7）', () => {
     expect(wrapper.find('.bookmarks').exists()).toBe(true)
 
     await wrapper.find('.bookmarks .add').trigger('click')
+    await flushPromises()
     const toast = wrapper.find('.toast-float')
     expect(toast.exists()).toBe(true)
     expect(toast.text()).toContain('已加书签')
@@ -559,7 +563,7 @@ describe('书签（C7）', () => {
     // 提示是 app 这一层的浮层：书签卡片盖不住它
     expect(wrapper.find('.bookmarks').element.contains(toast.element)).toBe(false)
     expect(wrapper.findAll('.bookmarks .row')).toHaveLength(1)
-    expect(loadBookmarks(bookId)).toHaveLength(1)
+    expect(await readerLibrary().loadBookmarks(bookId)).toHaveLength(1)
   })
 
   it('同一个位置重复加书签：提示「已经有了」而不是没反应', async () => {
@@ -569,43 +573,52 @@ describe('书签（C7）', () => {
 
     await pressKey('a')
     expect(wrapper.find('.toast-float').text()).toContain('已经有了')
-    expect(loadBookmarks(computeBookId(encoder.encode(TOC_NOVEL)))).toHaveLength(1)
+    expect(
+      await readerLibrary().loadBookmarks(computeBookId(encoder.encode(TOC_NOVEL))),
+    ).toHaveLength(1)
   })
 
   it('书签存不下时给出失败提示，不动已有的书签列表', async () => {
-    const wrapper = await mountApp()
-    const bookId = computeBookId(encoder.encode(TOC_NOVEL))
+    // 后端写到一半开始拒收书签：模拟容量满 / 存储被禁
+    const base = memoryStorage()
+    let blockBookmarks = false
+    const flaky: Storage = {
+      ...base,
+      setItem: (key, value) => {
+        if (blockBookmarks && key.includes('bookmarks')) throw new Error('存储空间不足')
+        base.setItem(key, value)
+      },
+    }
+    const library = createLibrary({ indexedDb: null, storage: flaky })
+    const bytes = encoder.encode(TOC_NOVEL)
+    const stored: StoredBook = {
+      id: computeBookId(bytes),
+      name: '长篇.txt',
+      size: bytes.length,
+      encoding: 'utf-8',
+      text: TOC_NOVEL,
+      bytes,
+      addedAt: 1,
+      lastOpenedAt: 2,
+    }
+    await library.saveBook(stored)
+    await library.setLastBook(stored.id)
+    const wrapper = mount(App, { props: { library } })
+    await flushPromises()
+
     await pressKey('a')
-    expect(loadBookmarks(bookId)).toHaveLength(1)
+    expect(await library.loadBookmarks(stored.id)).toHaveLength(1)
 
-    // 换一个「写书签就抛错」的 localStorage：模拟容量满 / 存储被禁
-    const real = window.localStorage
-    const broken = memoryStorage()
-    broken.setItem = (key, value) => {
-      if (key.includes('bookmarks')) throw new Error('存储空间不足')
-      real.setItem(key, value)
-    }
-    Object.defineProperty(window, 'localStorage', {
-      value: broken,
-      configurable: true,
-      writable: true,
-    })
-    try {
-      await pressKey('ArrowRight')
-      await pressKey('a')
-      expect(wrapper.find('.toast-float').text()).toContain('书签没存下')
-      expect(wrapper.find('.toast-float').text()).toContain('存储空间不足')
+    blockBookmarks = true
+    await pressKey('ArrowRight')
+    await pressKey('a')
+    expect(wrapper.find('.toast-float').text()).toContain('书签没存下')
+    expect(wrapper.find('.toast-float').text()).toContain('放不下')
 
-      // 内存里的列表没被写坏：还是第一章那一条
-      await pressKey('b')
-      expect(wrapper.findAll('.bookmarks .row')).toHaveLength(1)
-      expect(wrapper.find('.bookmarks .row').text()).toContain('第一章 初见')
-    } finally {
-      Object.defineProperty(window, 'localStorage', {
-        value: real,
-        configurable: true,
-        writable: true,
-      })
-    }
+    // 内存里的列表没被写坏：还是第一章那一条
+    await pressKey('b')
+    expect(wrapper.findAll('.bookmarks .row')).toHaveLength(1)
+    expect(wrapper.find('.bookmarks .row').text()).toContain('第一章 初见')
+    expect(await library.loadBookmarks(stored.id)).toHaveLength(1)
   })
 })

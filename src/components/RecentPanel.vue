@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { BookSummary } from '../core/library'
-import { loadProgress } from '../core/storage'
 import { formatStamp } from '../core/time'
 
 const props = defineProps<{
@@ -23,9 +22,9 @@ function sizeLabel(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** 「第 12/237 章 · 全书 18% · 昨天」，进度是按书上一次离开时记的 */
-function progressLabel(id: string): string {
-  const progress = loadProgress(id)
+/** 「第 12/237 章 · 全书 18%」，进度由书库随行给出，按书上一次离开时记的 */
+function progressLabel(book: BookSummary): string {
+  const progress = book.progress
   if (!progress) return '还没读过'
   const chapter = progress.chapterCount
     ? `第 ${progress.chapterIndex + 1}/${progress.chapterCount} 章`
@@ -36,7 +35,7 @@ function progressLabel(id: string): string {
 const rows = computed(() =>
   props.books.map((book) => ({
     ...book,
-    progress: progressLabel(book.id),
+    progress: progressLabel(book),
     stamp: formatStamp(book.lastOpenedAt, props.now),
     size: sizeLabel(book.size),
   })),

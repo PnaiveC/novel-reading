@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
 import { useReader } from '../../src/composables/useReader'
-import { createLibrary, type Library } from '../../src/core/library'
-import { clearStorage, fileKey, loadProgress, saveProgress } from '../../src/core/storage'
+import { createLibrary, fileKey, type Library } from '../../src/core/library'
+import { clearStorage } from '../../src/core/storage'
 import { fileOf, memoryStorage } from '../helpers/fakes'
 
 const encoder = new TextEncoder()
@@ -135,7 +135,7 @@ describe('useReader：进度记忆（A4）', () => {
     const reader = useReader({ library })
     await reader.openFile(fileOf('novel.txt', encoder.encode(NOVEL)))
     reader.nextChapter()
-    expect(loadProgress(reader.book.value!.id)).toMatchObject({
+    expect(await library.loadProgress(reader.book.value!.id)).toMatchObject({
       chapterIndex: 1,
       paragraphIndex: 0,
     })
@@ -143,12 +143,14 @@ describe('useReader：进度记忆（A4）', () => {
 
   it('v1 的老进度（文件名 + 大小）自动搬家到内容哈希', async () => {
     const bytes = encoder.encode(NOVEL)
-    saveProgress(fileKey('novel.txt', bytes.length), { chapterIndex: 1, paragraphIndex: 0, updatedAt: 7 })
+    const legacy = fileKey('novel.txt', bytes.length)
+    const library = newLibrary()
+    await library.saveProgress(legacy, { chapterIndex: 1, paragraphIndex: 0, updatedAt: 7 })
 
-    const reader = useReader({ library: newLibrary() })
+    const reader = useReader({ library })
     await reader.openFile(fileOf('novel.txt', bytes))
     expect(reader.chapterIndex.value).toBe(1)
-    expect(loadProgress(fileKey('novel.txt', bytes.length))).toBeNull()
+    expect(await library.loadProgress(legacy)).toBeNull()
   })
 })
 

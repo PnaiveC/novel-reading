@@ -1,14 +1,15 @@
 import { computed, ref } from 'vue'
 import { bookFromText, computeBookId, loadBookFromBytes, type LoadedBook } from '../core/book'
 import { ENCODING_LABELS, looksGarbled, type Encoding } from '../core/encoding'
-import { createLibrary, StorageFullError, type Library, type StoredBook } from '../core/library'
+import {
+  createLibrary,
+  StorageFullError,
+  type Library,
+  type ReadingProgress,
+  type StoredBook,
+} from '../core/library'
 import { splitParagraphs } from '../core/paragraphs'
 import { computeBookSpan, percentAt, positionLabel } from '../core/position'
-import {
-  migrateLegacyProgress,
-  saveProgress,
-  type ReadingProgress,
-} from '../core/storage'
 
 export type ReaderStatus = 'empty' | 'loading' | 'reading' | 'error'
 
@@ -95,8 +96,8 @@ export function useReader(options: UseReaderOptions = {}) {
     revision.value++
   }
 
-  function progressOf(loaded: LoadedBook): ReadingProgress | null {
-    return migrateLegacyProgress(loaded.id, loaded.name, loaded.size)
+  function progressOf(loaded: LoadedBook): Promise<ReadingProgress | null> {
+    return library.migrateLegacyProgress({ id: loaded.id, name: loaded.name, size: loaded.size })
   }
 
   /** 把这本书存到本机（A3）；存不下不致命，本次照读，只提示下次要重选 */
@@ -137,7 +138,7 @@ export function useReader(options: UseReaderOptions = {}) {
       rawBytes.value = bytes
       encodingLocked.value = Boolean(previous?.encodingLocked)
       stored = previous
-      show(loaded, progressOf(loaded))
+      show(loaded, await progressOf(loaded))
       anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
       await remember(loaded)
       if (!notice.value && looksGarbled(loaded.text)) {
@@ -157,7 +158,7 @@ export function useReader(options: UseReaderOptions = {}) {
     const loaded = record.bytes?.length
       ? loadBookFromBytes(record.name, record.bytes, record.encoding)
       : bookFromText(record)
-    show(loaded, progressOf(loaded))
+    show(loaded, await progressOf(loaded))
     anchorMemory = { chapterIndex: chapterIndex.value, paragraphIndex: anchorIndex.value }
     // 重开这本书，视作一次打开，让「最近」顺序保持正确
     await remember(loaded)
@@ -231,7 +232,7 @@ export function useReader(options: UseReaderOptions = {}) {
       chapterCount: chapters.value.length,
       percent: percent.value,
     }
-    saveProgress(book.value.id, progress)
+    void library.saveProgress(book.value.id, progress)
   }
 
   /**

@@ -1,12 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import {
-  createLibrary,
-  parseStoredBook,
-  serializeBook,
-  StorageFullError,
-  type StoredBook,
-} from '../../src/core/library'
+import { parseStoredBook, serializeBook, StorageFullError, type StoredBook } from '../../src/core/backends'
+import { createLibrary, fileKey } from '../../src/core/library'
 import { memoryStorage } from '../helpers/fakes'
 
 function makeBook(id: string): StoredBook {
@@ -215,5 +210,170 @@ describe('serializeBook / parseStoredBook', () => {
   it('没有字节的老记录照样读得出来', () => {
     const raw = JSON.stringify({ ...makeBook('old'), bytes: undefined })
     expect(parseStoredBook(raw)?.text).toBe(makeBook('old').text)
+  })
+})
+
+function makeBookmark(id: string) {
+  return {
+    id,
+    chapterIndex: 1,
+    paragraphIndex: 2,
+    chapterTitle: '第二章',
+    excerpt: '正文',
+    createdAt: 3,
+  }
+}
+
+describe('一本书在本机的足迹（N2）', () => {
+  it('进度存得回，v1 老记录补第 0 段，写不下也不抛', async () => {
+    const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+    expect(await library.loadProgress('missing')).toBeNull()
+
+    await library.saveProgress('a', {
+      chapterIndex: 2,
+      paragraphIndex: 4,
+      updatedAt: 5,
+      chapterCount: 30,
+      percent: 12,
+    })
+    expect(await library.loadProgress('a')).toEqual({
+      chapterIndex: 2,
+      paragraphIndex: 4,
+      updatedAt: 5,
+      chapterCount: 30,
+      percent: 12,
+    })
+
+    window.localStorage.setItem(
+      'novel-reading:progress:v1book',
+      JSON.stringify({ chapterIndex: 5, updatedAt: 1 }),
+    )
+    const fromV1 = createLibrary({ indexedDb: null, storage: window.localStorage })
+    expect(await fromV1.loadProgress('v1book')).toEqual({
+      chapterIndex: 5,
+      paragraphIndex: 0,
+      updatedAt: 1,
+    })
+
+    // 配额满：进度写不下去也不打断阅读（书签那种明确动作才提示）
+    const blocked: Storage = {
+      length: 0,
+      clear: () => undefined,
+      key: () => null,
+      getItem: () => null,
+      removeItem: () => undefined,
+      setItem: () => {
+        throw new Error('QuotaExceededError')
+      },
+    }
+    const tight = createLibrary({ indexedDb: null, storage: blocked })
+    await expect(
+      tight.saveProgress('a', { chapterIndex: 1, paragraphIndex: 0, updatedAt: 1 }),
+    ).resolves.toBeUndefined()
+  })
+
+  it('书签按书存、按书读，坏 JSON 当作没有', async () => {
+    const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+    await library.saveBookmarks('book-1', [makeBookmark('1:2')])
+    expect(await library.loadBookmarks('book-1')).toHaveLength(1)
+    expect(await library.loadBookmarks('book-2')).toEqual([])
+
+    window.localStorage.setItem('novel-reading:bookmarks:book-3', '{坏 JSON')
+    const onGlobal = createLibrary({ indexedDb: null, storage: window.localStorage })
+    expect(await onGlobal.loadBookmarks('book-3')).toEqual([])
+  })
+
+  it('删掉一本书：正文 / 索引 / 进度 / 书签 / 上次打开指针一起没', async () => {
+    const store = memoryStorage()
+    const library = createLibrary({ indexedDb: null, storage: store })
+    await library.saveBook(makeBook('a'))
+    await library.setLastBook('a')
+    await library.saveProgress('a', { chapterIndex: 1, paragraphIndex: 1, updatedAt: 1 })
+    await library.saveBookmarks('a', [makeBookmark('1:2')])
+
+    await library.removeBook('a')
+    expect(await library.getBook('a')).toBeNull()
+    expect(await library.getLastBook()).toBeNull()
+    expect(await library.loadProgress('a')).toBeNull()
+    expect(await library.loadBookmarks('a')).toEqual([])
+    expect(store.getItem('novel-reading:index:a')).toBeNull()
+  })
+
+  it('最近打开：一行带上进度，按上次打开倒序', async () => {
+    const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+    await library.saveBook({ ...makeBook('a'), lastOpenedAt: 10 })
+    await library.saveBook({ ...makeBook('b'), lastOpenedAt: 30 })
+    await library.saveProgress('a', {
+      chapterIndex: 1,
+      paragraphIndex: 0,
+      updatedAt: 1,
+      chapterCount: 4,
+      percent: 25,
+    })
+
+    const rows = await library.listBooks()
+    expect(rows.map((row) => row.id)).toEqual(['b', 'a'])
+    expect(rows[0]?.progress).toBeUndefined()
+    expect(rows[1]?.progress).toMatchObject({ chapterIndex: 1, percent: 25 })
+  })
+
+  it('列书不读大件：索引在的时候，列表只碰小记录', async () => {
+    const base = memoryStorage()
+    const reads: string[] = []
+    const counting: Storage = {
+      ...base,
+      // 展开会把 memoryStorage 的 length getter 变成某个瞬间的值，这里得补回来
+      get length() {
+        return base.length
+      },
+      key: (index) => base.key(index),
+      getItem: (key) => {
+        reads.push(key)
+        return base.getItem(key)
+      },
+    }
+    const library = createLibrary({ indexedDb: null, storage: counting })
+    await library.saveBook({ ...makeBook('big'), text: '正文'.repeat(2000) })
+    await library.listBooks()
+
+    reads.length = 0
+    expect((await library.listBooks()).map((row) => row.id)).toEqual(['big'])
+    expect(reads.filter((key) => key.startsWith('novel-reading:book:'))).toEqual([])
+  })
+
+  it('老数据还没有索引：列表照样列得出来，顺手补上索引', async () => {
+    const store = memoryStorage()
+    store.setItem('novel-reading:book:old', serializeBook({ ...makeBook('old'), lastOpenedAt: 3 }))
+    const library = createLibrary({ indexedDb: null, storage: store })
+
+    expect((await library.listBooks()).map((row) => row.id)).toEqual(['old'])
+    expect(store.getItem('novel-reading:index:old')).toContain('old.txt')
+  })
+
+  it('v1 的进度键（文件名 + 大小）搬一次家', async () => {
+    const library = createLibrary({ indexedDb: null, storage: memoryStorage() })
+    const legacy = fileKey('novel.txt', 20)
+    await library.saveProgress(legacy, { chapterIndex: 1, paragraphIndex: 3, updatedAt: 7 })
+
+    const progress = await library.migrateLegacyProgress({ id: 'hash-a', name: 'novel.txt', size: 20 })
+    expect(progress).toMatchObject({ chapterIndex: 1, paragraphIndex: 3 })
+    expect(await library.loadProgress('hash-a')).not.toBeNull()
+    expect(await library.loadProgress(legacy)).toBeNull()
+  })
+
+  it('IndexedDB 后端一样：进度 / 书签 / 列表 / 删足迹都走同一个 module', async () => {
+    const library = createLibrary({ indexedDb: new IDBFactory() })
+    await library.saveBook({ ...makeBook('a'), lastOpenedAt: 10 })
+    await library.setLastBook('a')
+    await library.saveProgress('a', { chapterIndex: 2, paragraphIndex: 1, updatedAt: 5 })
+    await library.saveBookmarks('a', [makeBookmark('1:2')])
+
+    expect((await library.listBooks())[0]?.progress?.chapterIndex).toBe(2)
+    expect(await library.loadBookmarks('a')).toHaveLength(1)
+
+    await library.removeBook('a')
+    expect(await library.listBooks()).toEqual([])
+    expect(await library.loadProgress('a')).toBeNull()
+    expect(await library.loadBookmarks('a')).toEqual([])
   })
 })
