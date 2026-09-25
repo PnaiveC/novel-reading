@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { OutputAsset, OutputBundle } from 'rollup'
 import type { Plugin } from 'vite'
+import { sourceStamp, stampHtml } from './source-stamp'
 
 export interface InlineAsset {
   fileName: string
@@ -74,13 +75,19 @@ function isHtml(file: OutputAsset): boolean {
 /** 根目录下双击即读的交付文件：构建完顺带抄一份过去，省得再手动复制 */
 export const DELIVERY_FILE = 'index.html'
 
-/** 构建产物必须只剩一个自包含 HTML，否则直接失败，不给「白屏」留机会 */
+/**
+ * 构建产物必须只剩一个自包含 HTML，否则直接失败，不给「白屏」留机会。
+ * 这个插件只动构建输出目录里的东西，不碰工作区。
+ */
 export function singleFilePlugin(): Plugin {
-  let built: string | null = null
+  let root = process.cwd()
   return {
     name: 'novel-reading:single-file',
     apply: 'build',
     enforce: 'post',
+    configResolved(config) {
+      root = config.root
+    },
     generateBundle(_options, bundle: OutputBundle) {
       const htmlFile = Object.values(bundle).find(
         (file): file is OutputAsset => file.type === 'asset' && isHtml(file),
@@ -105,20 +112,41 @@ export function singleFilePlugin(): Plugin {
       const html = inlineSingleFile(String(htmlFile.source), assets)
       const refs = findExternalRefs(html)
       if (refs.length) throw new Error(`[single-file] 产物仍引用外部文件：${refs.join(', ')}`)
-      htmlFile.source = html
+      // 盖一个源码指纹：交付文件是不是这份源码构建的，测试一比就知道
+      htmlFile.source = stampHtml(html, sourceStamp(root))
       // 入口在 src/ 下，产物名字对齐成 dist/index.html
       if (htmlFile.fileName !== DELIVERY_FILE) {
         delete bundle[htmlFile.fileName]
         htmlFile.fileName = DELIVERY_FILE
         bundle[DELIVERY_FILE] = htmlFile
       }
-      built = html
       this.warn(`[single-file] 已内联 ${assets.length} 个资源，产物 ${html.length} 字符`)
+    },
+  }
+}
+
+/**
+ * 交付文件（N3）：构建完把产物抄一份到仓库根目录，双击即读。
+ * 单独一个插件是为了让「只要产物、别动工作区」的场景（构建期测试）能跳过它——
+ * 根目录那份是 git 跟踪的交付文件，测试不该顺手改它。
+ */
+export function deliveryFilePlugin(options: { file?: string } = {}): Plugin {
+  const target = options.file ?? DELIVERY_FILE
+  let built: string | null = null
+  return {
+    name: 'novel-reading:delivery-file',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      const htmlFile = Object.values(bundle).find(
+        (file): file is OutputAsset => file.type === 'asset' && isHtml(file),
+      )
+      built = htmlFile ? String(htmlFile.source) : null
     },
     writeBundle() {
       if (built === null) return
-      writeFileSync(resolve(process.cwd(), DELIVERY_FILE), built, 'utf8')
-      this.warn(`[single-file] 交付文件已更新：${DELIVERY_FILE}（双击即读）`)
+      writeFileSync(resolve(process.cwd(), target), built, 'utf8')
+      this.warn(`[single-file] 交付文件已更新：${target}（双击即读）`)
     },
   }
 }

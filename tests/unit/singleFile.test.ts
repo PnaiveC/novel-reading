@@ -1,13 +1,16 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { OutputBundle } from 'rollup'
 import { describe, expect, it } from 'vitest'
 import {
   DELIVERY_FILE,
+  deliveryFilePlugin,
   findExternalRefs,
   inlineSingleFile,
   singleFilePlugin,
 } from '../../build/single-file'
+import { readStamp, sourceStamp, stampHtml } from '../../build/source-stamp'
 
 const HTML = `<!doctype html>
 <html><head>
@@ -106,11 +109,39 @@ describe('singleFilePlugin', () => {
     const html = String((bundle[DELIVERY_FILE] as { source: string }).source)
     expect(html).toContain('boot()')
     expect(html).toContain('body{color:red}')
+    // 产物带着源码指纹：交付文件落后没落后，测试一比就知道（N3）
+    expect(readStamp(html)).toMatch(/^[0-9a-f]{16}$/)
   })
 })
 
-const distHtml = join(process.cwd(), 'dist', 'index.html')
-const rootHtml = join(process.cwd(), DELIVERY_FILE)
+describe('源码指纹（N3）', () => {
+  it('源码没变指纹一致；改一个文件就变', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'source-stamp-'))
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true })
+      writeFileSync(join(dir, 'src', 'a.ts'), 'const a = 1\n')
+      const first = sourceStamp(dir)
+      expect(sourceStamp(dir)).toBe(first)
+
+      writeFileSync(join(dir, 'src', 'a.ts'), 'const a = 2\n')
+      const second = sourceStamp(dir)
+      expect(second).not.toBe(first)
+
+      writeFileSync(join(dir, 'src', 'b.ts'), 'const b = 1\n')
+      expect(sourceStamp(dir)).not.toBe(second)
+    } finally {
+      if (dir.startsWith(tmpdir())) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('能写进产物 HTML，也能读回来', () => {
+    const stamped = stampHtml('<!doctype html><html><head></head><body></body></html>', 'abc123')
+    expect(stamped).toContain('<head>\n    <!-- novel-reading build abc123 -->')
+    expect(readStamp(stamped)).toBe('abc123')
+    expect(readStamp('<html><head></head></html>')).toBeNull()
+  })
+})
+
 const entryHtml = join(process.cwd(), 'src', 'index.html')
 
 describe('构建入口', () => {
@@ -131,16 +162,45 @@ describe('构建入口', () => {
   })
 })
 
-describe('构建产物', () => {
-  it.skipIf(!existsSync(distHtml))('dist/index.html 自包含（先跑 npm run build）', () => {
-    const html = readFileSync(distHtml, 'utf8')
-    expect(findExternalRefs(html)).toEqual([])
-    expect(html).toContain('<div id="app">')
+describe('交付文件插件（N3）：抄交付文件是单独一步', () => {
+  it('把产物写到指定目标（根目录那份由 npm run build 落）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'delivery-plugin-'))
+    try {
+      const target = join(dir, 'index.html')
+      const plugin = deliveryFilePlugin({ file: target })
+      const bundle = {
+        'index.html': { type: 'asset', fileName: 'index.html', source: '<html>ok</html>' },
+      } as unknown as OutputBundle
+      const generate = plugin.generateBundle as (
+        this: unknown,
+        options: unknown,
+        bundle: OutputBundle,
+      ) => void
+      generate.call({ warn: () => undefined }, {}, bundle)
+      ;(plugin.writeBundle as (this: unknown) => void).call({ warn: () => undefined })
+
+      expect(readFileSync(target, 'utf8')).toBe('<html>ok</html>')
+    } finally {
+      if (dir.startsWith(tmpdir())) rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  it.skipIf(!existsSync(distHtml))('根目录的交付文件与 dist 产物一致（双击的就是新的）', () => {
-    expect(existsSync(rootHtml)).toBe(true)
-    expect(readFileSync(rootHtml, 'utf8')).toBe(readFileSync(distHtml, 'utf8'))
-    expect(findExternalRefs(readFileSync(rootHtml, 'utf8'))).toEqual([])
+  it('输出里没有 HTML 时什么都不写', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'delivery-plugin-'))
+    try {
+      const target = join(dir, 'index.html')
+      const plugin = deliveryFilePlugin({ file: target })
+      const generate = plugin.generateBundle as (
+        this: unknown,
+        options: unknown,
+        bundle: OutputBundle,
+      ) => void
+      generate.call({ warn: () => undefined }, {}, {} as OutputBundle)
+      ;(plugin.writeBundle as (this: unknown) => void).call({ warn: () => undefined })
+
+      expect(existsSync(target)).toBe(false)
+    } finally {
+      if (dir.startsWith(tmpdir())) rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
