@@ -21,26 +21,39 @@ npm run build   # 类型检查 + 生产构建（产出 dist/index.html，并抄�
 - `index.html`：**交付文件**（构建产物），双击即读；由 `npm run build` 自动覆盖更新。
 - `dist/index.html`：构建输出目录里的同一份产物（`dist/` 不入库）。
 
+`npm test` 会用真配置在系统临时目录里现建一份产物，跑「自包含 + 冷启动」；再比对**源码指纹**，
+检查根目录的交付文件有没有落后——改了源码却没跑 `npm run build`，这一条会红（c1fea72 那次空跑构建就是这么被盯住的）。
+
 ## 文档
 
-- [docs/v2-features.md](docs/v2-features.md)：v2 功能清单（A → B → C → D，逐个实现与验收）
+- [CONTEXT.md](CONTEXT.md)：术语表（书 / 章节 / 段落锚点 / 阅读位置 / 阅读视口 / 章节窗口 / 书库 …）
+- [v2-features.md](v2-features.md)：v2 功能清单（A → B → C → D，逐个实现与验收）
 - [docs/v2-plan.md](docs/v2-plan.md)：v2 方案（交付形态、里程碑、验收标准）
 - [docs/mvp-plan.md](docs/mvp-plan.md)：v1 需求存档
 - [docs/EXPERIENCE.md](docs/EXPERIENCE.md)：环境坑与交接要点
+- [docs/n1-reading-viewport.md](docs/n1-reading-viewport.md)：N1「把阅读位置收成一个 module」的设计（已实施）
+- [docs/n2-book-footprint.md](docs/n2-book-footprint.md)：N2「一本书在本机的足迹收成一个 module」的设计（已实施）
+- [docs/n3-delivery-chain.md](docs/n3-delivery-chain.md)：N3「交付链：一个产物，三份身份」的设计（已实施）
+- [docs/n4-what-just-happened.md](docs/n4-what-just-happened.md)：N4「刚发生了什么收成一个记账处」的设计（已实施）
+- [docs/adr/](docs/adr/)：架构决策记录（滚动补偿规则 / 视口 module 形状 / seam 与测试驱动 / 书库足迹 / 交付链守卫 / 提示与回执）
 
 ## 当前目录
 
 ```
-src/core/        编码检测（UTF-8 / GBK / GB18030 / UTF-16LE）、章节解析、书库（IndexedDB + localStorage 兜底）、
-                 进度 / 设置 / 快捷键 / 书签 / 界面偏好存储、位置百分比、base64（兜底存原始字节）、
-                 主题解析、快捷键绑定、书签、连续阅读窗口、时间显示——全是纯逻辑
+src/core/        编码检测（UTF-8 / GBK / GB18030 / UTF-16LE）、章节解析、位置百分比、base64（兜底存原始字节）、
+                 主题解析、快捷键绑定、书签、全局偏好存储（排版 / 快捷键 / 界面偏好）、
+                 刚发生了什么（提示 / 回执两格）、
+                 连续阅读的窗口策略与翻页 / 补偿数学（`src/reader/` 的视口调用）、时间显示——纯逻辑；
+                 书库（library.ts：一本书在本机的足迹——正文 / 进度 / 书签 / 上次打开）与它的存储后端
+                 （backends.ts：IndexedDB 优先，localStorage 兜底，再不行内存）
+src/reader/      阅读视口：唯一碰 DOM 的模块，自己测量正文、自己改章节窗口、自己补偿 scrollTop（N1）
 src/composables/ useReader：打开书 → 正文上屏 → 记住书 / 位置 / 编码；useSettings：排版设置；
-                 useShortcuts：快捷键改键；useUiPrefs：界面偏好（沉浸模式）
+                 useShortcuts：快捷键改键；useUiPrefs：界面偏好（沉浸模式）；useNotices：提示 / 回执
 src/components/  TocPanel（目录）、SettingsPanel（排版 / 编码 / 主题）、RecentPanel（最近打开）、
                  BookmarkPanel（书签）、ShortcutPanel（快捷键改键）
 src/App.vue      界面：空态（拖拽 / 选文件）、阅读页（连续正文 + 目录 + 上下章 + 快捷键 + 沉浸模式 + 位置提示）
-build/           vite 单文件插件（JS/CSS 内联，产物只剩 1 个 HTML）
-tests/unit/      单测；distBoot 会空跑构建产物，确认双击能起来
+build/           vite 单文件插件（JS/CSS 内联，产物只剩 1 个 HTML）+ 抄交付文件 + 源码指纹
+tests/unit/      单测；delivery 会现建一份产物空跑，确认双击能起来、交付文件没落后
 samples/         手测用样例小说（demo.txt 与它的 GBK 版 demo-gbk.txt）
 ```
 
